@@ -1,6 +1,6 @@
 {
   "name": "discord-terminplanungsbot",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Ein Discord Bot für Terminplanung",
   "main": "dist/index.js",
   "scripts": {

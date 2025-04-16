@@ -80,6 +80,8 @@ client.on(Events.InteractionCreate, async interaction => {
         terminManager.cancelEvent(interaction, eventId);
       } else if (option === 'close') {
         terminManager.closeEvent(interaction, eventId);
+      } else if (option === 'remind') {
+        terminManager.sendReminders(interaction, eventId);
       }
     }
   } else if (interaction.isModalSubmit()) {

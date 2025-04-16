@@ -15,7 +15,7 @@ export interface Participant {
   userId: string;
   username: string;
   status: 'pending' | 'accepted' | 'acceptedWithoutTime' | 'declined' | 'otherTime';
-  alternativeTime?: string;  // Neue Eigenschaft für alternative Uhrzeit
+  alternativeTime?: string;  // Eigenschaft für alternative Uhrzeit
 }
 
 export interface Event {
@@ -23,6 +23,8 @@ export interface Event {
   title: string;
   date: string;
   time: string;
+  relativeDate?: string;  // Neues optionales Feld für relatives Datum
+  comment?: string;       // Neues optionales Feld für Kommentar
   organizer: string;
   participants: Participant[];
   channelId: string;

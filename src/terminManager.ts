@@ -43,7 +43,9 @@ export async function createEvent(
   time: string,
   organizerId: string,
   participants: string[],
-  channel: TextChannel
+  channel: TextChannel,
+  relativeDate?: string | null,
+  comment?: string | null
 ): Promise<string> {
   const events = loadEvents();
   
@@ -57,13 +59,17 @@ export async function createEvent(
   const serverEmbed = new EmbedBuilder()
     .setColor('#0099ff')
     .setTitle(`Terminplanung: ${title}`)
-    .setDescription(`Termin für ${date} um ${time} Uhr.\nStatus der Teilnehmer:`)
+    .setDescription(`Termin für ${date} um ${time} Uhr.${relativeDate ? `\nDas ist ${relativeDate}` : ''}${comment ? `\n\n**Kommentar:** ${comment}` : ''}\nStatus der Teilnehmer:`)
     .setTimestamp()
     .setFooter({ text: `Event ID: ${eventId} • Status: Aktiv` });
   
   // Admin-Buttons (erste Reihe)
   const adminButtons = new ActionRowBuilder<ButtonBuilder>()
     .addComponents(
+      new ButtonBuilder()
+        .setCustomId(`manage:${eventId}:remind`)
+        .setLabel('Erinnerung senden')
+        .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`manage:${eventId}:cancel`)
         .setLabel('Terminsuche abbrechen')
@@ -107,6 +113,8 @@ export async function createEvent(
     title,
     date,
     time,
+    relativeDate: relativeDate || undefined,
+    comment: comment || undefined,
     organizer: organizerId,
     participants: participantsList,
     channelId: channel.id,
@@ -126,7 +134,9 @@ export async function inviteParticipant(
   user: User,
   title: string,
   date: string,
-  time: string
+  time: string,
+  relativeDate?: string | null,
+  comment?: string | null
 ): Promise<void> {
   const events = loadEvents();
   const eventIndex = events.findIndex(e => e.id === eventId);
@@ -144,11 +154,22 @@ export async function inviteParticipant(
     alternativeTime: '' // Neues Feld für alternative Uhrzeit
   });
   
+  // Beschreibung mit optionalem relativem Datum und Kommentar
+  let description = `Du wurdest eingeladen am ${date} an ${title} teilzunehmen, um ${time} Uhr.`;
+  
+  if (relativeDate) {
+    description += `\nDas ist ${relativeDate}`;
+  }
+  
+  if (comment) {
+    description += `\n\n**Kommentar:** ${comment}`;
+  }
+  
   // Embed für DM erstellen
   const dmEmbed = new EmbedBuilder()
     .setColor('#0099ff')
     .setTitle(`Terminsuche: ${title}`)
-    .setDescription(`Du wurdest eingeladen am ${date} an ${title} teilzunehmen, um ${time} Uhr.`)
+    .setDescription(description)
     .setTimestamp()
     .setFooter({ text: `Event ID: ${eventId}` });
   
@@ -256,11 +277,24 @@ export async function updateEventMessage(eventId: string): Promise<void> {
         ? 'Geschlossen' 
         : 'Abgebrochen';
     
+    // Beschreibung mit optionalem relativem Datum und Kommentar
+    let description = `Termin für ${event.date} um ${event.time} Uhr.`;
+    
+    if (event.relativeDate) {
+      description += `\nDas ist ${event.relativeDate}`;
+    }
+    
+    if (event.comment) {
+      description += `\n\n**Kommentar:** ${event.comment}`;
+    }
+    
+    description += `\nStatus der Teilnehmer:`;
+    
     // Embed für Server-Channel aktualisieren
     const updatedEmbed = new EmbedBuilder()
       .setColor('#0099ff')
       .setTitle(`Terminplanung: ${event.title}`)
-      .setDescription(`Termin für ${event.date} um ${event.time} Uhr.\nStatus der Teilnehmer:`)
+      .setDescription(description)
       .addFields({ name: 'Teilnehmer', value: participantsText })
       .setTimestamp()
       .setFooter({ text: `Event ID: ${event.id} • Status: ${statusText}` });
@@ -270,6 +304,10 @@ export async function updateEventMessage(eventId: string): Promise<void> {
     
     if (event.status === 'active') {
       updatedAdminButtons.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`manage:${eventId}:remind`)
+          .setLabel('Erinnerung senden')
+          .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId(`manage:${eventId}:cancel`)
           .setLabel('Terminsuche abbrechen')
@@ -312,6 +350,108 @@ export async function updateEventMessage(eventId: string): Promise<void> {
   } catch (error) {
     console.error(`Fehler beim Aktualisieren der Event-Nachricht:`, error);
   }
+}
+
+// Erinnerung an nicht antwortende Teilnehmer senden
+export async function sendReminders(interaction: ButtonInteraction, eventId: string): Promise<void> {
+  const events = loadEvents();
+  const eventIndex = events.findIndex(e => e.id === eventId);
+  
+  if (eventIndex === -1) {
+    await interaction.reply({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
+    return;
+  }
+  
+  const event = events[eventIndex];
+  
+  // Prüfen, ob das Event noch aktiv ist
+  if (event.status !== 'active') {
+    await interaction.reply({ 
+      content: `Diese Terminsuche wurde ${event.status === 'closed' ? 'geschlossen' : 'abgebrochen'}.`, 
+      ephemeral: true 
+    });
+    return;
+  }
+  
+  // Teilnehmer ohne Antwort finden
+  const pendingParticipants = event.participants.filter(p => p.status === 'pending');
+  
+  if (pendingParticipants.length === 0) {
+    await interaction.reply({ 
+      content: "Es gibt keine Teilnehmer, die noch nicht geantwortet haben.", 
+      ephemeral: true 
+    });
+    return;
+  }
+  
+  // Erinnerung an jeden Teilnehmer ohne Antwort senden
+  let successCount = 0;
+  let failCount = 0;
+  
+  // Beschreibung mit optionalem relativem Datum und Kommentar für Erinnerung
+  let reminderDescription = `Erinnerung: Du wurdest eingeladen am ${event.date} an ${event.title} teilzunehmen, um ${event.time} Uhr.`;
+  
+  if (event.relativeDate) {
+    reminderDescription += `\nDas ist ${event.relativeDate}`;
+  }
+  
+  if (event.comment) {
+    reminderDescription += `\n\n**Kommentar:** ${event.comment}`;
+  }
+  
+  reminderDescription += `\n\n**Bitte antworte auf die Einladung.**`;
+  
+  // Embed für Erinnerung erstellen
+  const reminderEmbed = new EmbedBuilder()
+    .setColor('#FFA500') // Orange für Erinnerung
+    .setTitle(`Erinnerung: Terminsuche ${event.title}`)
+    .setDescription(reminderDescription)
+    .setTimestamp()
+    .setFooter({ text: `Event ID: ${eventId}` });
+  
+  // Buttons für Erinnerung
+  const reminderRow = new ActionRowBuilder<ButtonBuilder>()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId(`respond:${eventId}:accept`)
+        .setLabel('Zusagen')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`respond:${eventId}:acceptNoTime`)
+        .setLabel('Zusagen ohne Uhrzeitgarantie')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`respond:${eventId}:otherTime`)
+        .setLabel('Andere Uhrzeit')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`respond:${eventId}:decline`)
+        .setLabel('Absagen')
+        .setStyle(ButtonStyle.Danger)
+    );
+  
+  // Sende Erinnerungen
+  for (const participant of pendingParticipants) {
+    try {
+      const user = await interaction.client.users.fetch(participant.userId);
+      await user.send({
+        embeds: [reminderEmbed],
+        components: [reminderRow]
+      });
+      successCount++;
+    } catch (error) {
+      console.error(`Konnte keine Erinnerung an ${participant.username} senden:`, error);
+      failCount++;
+    }
+  }
+  
+  // Rückmeldung an den Admin
+  await interaction.reply({ 
+    content: `Erinnerungen gesendet!\n` +
+      `✅ ${successCount} Erinnerungen erfolgreich versandt.\n` +
+      (failCount > 0 ? `❌ ${failCount} Erinnerungen konnten nicht zugestellt werden.` : ''),
+    ephemeral: true 
+  });
 }
 
 // Modal für alternative Uhrzeit anzeigen
@@ -481,6 +621,7 @@ export default {
   updateEventMessage,
   handleResponse,
   handleAlternativeTime,
+  sendReminders,
   cancelEvent,
   closeEvent
 };

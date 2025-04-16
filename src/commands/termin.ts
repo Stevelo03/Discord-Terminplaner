@@ -14,7 +14,7 @@ module.exports = {
         .setRequired(true))
     .addStringOption(option => 
       option.setName('datum')
-        .setDescription('Datum des Events (z.B. "25.04.2025")')
+        .setDescription('Datum des Events (z.B. "25.04.2025" oder "<t:1744819440:D>")')
         .setRequired(true))
     .addStringOption(option => 
       option.setName('uhrzeit')
@@ -23,7 +23,15 @@ module.exports = {
     .addStringOption(option => 
       option.setName('teilnehmer')
         .setDescription('IDs der Teilnehmer, getrennt durch Kommas (z.B. "@user1, @user2")')
-        .setRequired(true)),
+        .setRequired(true))
+    .addStringOption(option => 
+      option.setName('relatives_datum')
+        .setDescription('Relatives Datum (z.B. "<t:1744819440:R>" für "in 3 Tagen")')
+        .setRequired(false))
+    .addStringOption(option => 
+      option.setName('kommentar')
+        .setDescription('Optionaler Kommentar zum Termin')
+        .setRequired(false)),
   
   async execute(interaction: ChatInputCommandInteraction) {
     // Überprüfen, ob der Nutzer Administrator ist
@@ -35,6 +43,8 @@ module.exports = {
     const title = interaction.options.getString('titel') || '';
     const date = interaction.options.getString('datum') || '';
     const time = interaction.options.getString('uhrzeit') || '';
+    const relativeDate = interaction.options.getString('relatives_datum');
+    const comment = interaction.options.getString('kommentar');
     const participantsString = interaction.options.getString('teilnehmer') || '';
     
     // Teilnehmer-IDs extrahieren
@@ -55,7 +65,9 @@ module.exports = {
       time,
       interaction.user.id,
       participantIds,
-      interaction.channel as TextChannel
+      interaction.channel as TextChannel,
+      relativeDate,
+      comment
     );
     
     // Teilnehmer einladen
@@ -65,7 +77,7 @@ module.exports = {
     for (const userId of participantIds) {
       try {
         const user = await interaction.client.users.fetch(userId);
-        await inviteParticipant(eventId, user, title, date, time);
+        await inviteParticipant(eventId, user, title, date, time, relativeDate, comment);
         successCount++;
       } catch (error) {
         console.error(`Fehler beim Einladen von Benutzer ${userId}:`, error);

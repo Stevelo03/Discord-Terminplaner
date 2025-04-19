@@ -5,7 +5,7 @@ import path from 'path';
 
 config();
 
-export async function registerCommands() {
+export async function registerCommands(guildId?: string) {
   const commands = [];
   const commandsPath = path.join(__dirname, 'commands');
   const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js') || file.endsWith('.ts'));
@@ -23,28 +23,36 @@ export async function registerCommands() {
   const rest = new REST().setToken(process.env.BOT_TOKEN || '');
 
   try {
-    console.log(`Starte das Aktualisieren von ${commands.length} Slash-Befehlen.`);
+    console.log(`Starte das Aktualisieren von ${commands.length} Slash-Befehlen${guildId ? ` für Server ${guildId}` : ' für alle Server'}.`);
 
-    // Multi-Server-Unterstützung
-    const guildIds = (process.env.GUILD_IDS || '').split(',').filter(id => id.trim());
-    
-    if (guildIds.length === 0) {
-      console.error('Keine Server-IDs konfiguriert. Bitte setze GUILD_IDS in der .env-Datei.');
-      return;
-    }
-
-    // Für jeden Server die Befehle registrieren
-    for (const guildId of guildIds) {
+    // Wenn eine spezifische Guild-ID übergeben wurde, nur für diese registrieren
+    if (guildId) {
       await rest.put(
         Routes.applicationGuildCommands(
           process.env.CLIENT_ID || '',
-          guildId.trim()
+          guildId
         ),
         { body: commands },
       );
-      console.log(`Slash-Befehle für Server ${guildId.trim()} erfolgreich aktualisiert!`);
+      console.log(`Slash-Befehle für Server ${guildId} erfolgreich aktualisiert!`);
+    } else {
+      // Globale Befehle registrieren
+      await rest.put(
+        Routes.applicationCommands(process.env.CLIENT_ID || ''),
+        { body: commands },
+      );
+      console.log('Globale Slash-Befehle erfolgreich aktualisiert!');
     }
   } catch (error) {
     console.error('Fehler beim Registrieren der Slash-Befehle:', error);
+  }
+}
+
+// Funktion zum Registrieren für alle Guilds, in denen der Bot ist
+export async function registerCommandsForAllGuilds(client: any) {
+  const guildIds = client.guilds.cache.map((guild: any) => guild.id);
+  
+  for (const guildId of guildIds) {
+    await registerCommands(guildId);
   }
 }

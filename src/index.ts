@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { Command } from './types';
 import { PermissionFlagsBits } from 'discord.js';
-import { registerCommands } from './deploy-commands';
+import { registerCommands, registerCommandsForAllGuilds } from './deploy-commands';
 
 config();
 
@@ -82,6 +82,8 @@ client.on(Events.InteractionCreate, async interaction => {
         terminManager.closeEvent(interaction, eventId);
       } else if (option === 'remind') {
         terminManager.sendReminders(interaction, eventId);
+      } else if (option === 'startReminder') {
+        terminManager.sendStartReminder(interaction, eventId);
       }
     }
   } else if (interaction.isModalSubmit()) {
@@ -95,10 +97,22 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 });
 
+// Event Handler für Beitritt zu neuen Servern
+client.on(Events.GuildCreate, async guild => {
+  console.log(`Bot wurde zu einem neuen Server hinzugefügt: ${guild.name} (ID: ${guild.id})`);
+  
+  // Registriere Befehle für den neuen Server
+  await registerCommands(guild.id);
+  console.log(`Befehle für ${guild.name} erfolgreich registriert.`);
+});
+
 // Client einloggen
 client.once(Events.ClientReady, async () => {
   console.log(`Eingeloggt als ${client.user?.tag}!`);
-  await registerCommands();
+  
+  // Registriere Befehle für alle Server, in denen der Bot bereits ist
+  await registerCommandsForAllGuilds(client);
+  console.log('Befehle für alle existierenden Server erfolgreich registriert.');
 });
 
 client.login(process.env.BOT_TOKEN);

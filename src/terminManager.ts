@@ -71,6 +71,10 @@ export async function createEvent(
         .setLabel('Erinnerung senden')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
+        .setCustomId(`manage:${eventId}:startReminder`)
+        .setLabel('Termin Starterinnerung')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
         .setCustomId(`manage:${eventId}:cancel`)
         .setLabel('Terminsuche abbrechen')
         .setStyle(ButtonStyle.Danger),
@@ -309,6 +313,10 @@ export async function updateEventMessage(eventId: string): Promise<void> {
           .setLabel('Erinnerung senden')
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
+          .setCustomId(`manage:${eventId}:startReminder`)
+          .setLabel('Termin Starterinnerung')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
           .setCustomId(`manage:${eventId}:cancel`)
           .setLabel('Terminsuche abbrechen')
           .setStyle(ButtonStyle.Danger),
@@ -450,6 +458,75 @@ export async function sendReminders(interaction: ButtonInteraction, eventId: str
     content: `Erinnerungen gesendet!\n` +
       `✅ ${successCount} Erinnerungen erfolgreich versandt.\n` +
       (failCount > 0 ? `❌ ${failCount} Erinnerungen konnten nicht zugestellt werden.` : ''),
+    ephemeral: true 
+  });
+}
+
+// Starterinnerung an zugesagte Teilnehmer senden
+export async function sendStartReminder(interaction: ButtonInteraction, eventId: string): Promise<void> {
+  const events = loadEvents();
+  const eventIndex = events.findIndex(e => e.id === eventId);
+  
+  if (eventIndex === -1) {
+    await interaction.reply({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
+    return;
+  }
+  
+  const event = events[eventIndex];
+  
+  // Prüfen, ob das Event noch aktiv ist
+  if (event.status !== 'active') {
+    await interaction.reply({ 
+      content: `Diese Terminsuche wurde ${event.status === 'closed' ? 'geschlossen' : 'abgebrochen'}.`, 
+      ephemeral: true 
+    });
+    return;
+  }
+  
+  // Teilnehmer finden, die zugesagt haben oder eine andere Uhrzeit angegeben haben
+  const eligibleParticipants = event.participants.filter(p => 
+    p.status === 'accepted' || 
+    p.status === 'acceptedWithoutTime' || 
+    p.status === 'otherTime'
+  );
+  
+  if (eligibleParticipants.length === 0) {
+    await interaction.reply({ 
+      content: "Es gibt keine Teilnehmer, die bereits zugesagt haben oder eine alternative Uhrzeit angegeben haben.", 
+      ephemeral: true 
+    });
+    return;
+  }
+  
+  // Starterinnerung an jeden zugesagten Teilnehmer senden
+  let successCount = 0;
+  let failCount = 0;
+  
+  // Embed für Starterinnerung erstellen
+  const startReminderEmbed = new EmbedBuilder()
+    .setColor('#FEE75C') 
+    .setTitle(`🎮 Termin ${event.title} beginnt gleich!`)
+    .setDescription(`Der Termin beginnt am ${event.date} um ${event.time} Uhr.${event.relativeDate ? `\nDas ist ${event.relativeDate}` : ''}\n\n⏰ Bitte bereite dich auf den Start vor!${event.comment ? `\n\n**Kommentar:** ${event.comment}` : ''}`)
+    .setTimestamp()
+    .setFooter({ text: `Event ID: ${eventId}` });
+  
+  // Sende Starterinnerungen
+  for (const participant of eligibleParticipants) {
+    try {
+      const user = await interaction.client.users.fetch(participant.userId);
+      await user.send({ embeds: [startReminderEmbed] });
+      successCount++;
+    } catch (error) {
+      console.error(`Konnte keine Starterinnerung an ${participant.username} senden:`, error);
+      failCount++;
+    }
+  }
+  
+  // Rückmeldung an den Admin
+  await interaction.reply({ 
+    content: `Starterinnerungen gesendet!\n` +
+      `✅ ${successCount} Starterinnerungen erfolgreich versandt.\n` +
+      (failCount > 0 ? `❌ ${failCount} Starterinnerungen konnten nicht zugestellt werden.` : ''),
     ephemeral: true 
   });
 }
@@ -622,6 +699,7 @@ export default {
   handleResponse,
   handleAlternativeTime,
   sendReminders,
+  sendStartReminder,
   cancelEvent,
   closeEvent
 };

@@ -51,14 +51,6 @@ npm run build
 npm start
 ```
 
-### Produktivbetrieb mit PM2
-```bash
-npm install -g pm2
-pm2 start npm --name "terminbot" -- start
-pm2 startup
-pm2 save
-```
-
 ## Befehle 💬
 
 ### `/termin`

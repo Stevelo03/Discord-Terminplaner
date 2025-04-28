@@ -1,37 +1,19 @@
 import { SlashCommandBuilder } from 'discord.js';
-import { CommandInteraction, TextChannel, GuildMember, Role } from 'discord.js';
-import { PermissionFlagsBits } from 'discord.js';
-import { ChatInputCommandInteraction } from 'discord.js';
-import { createEvent, inviteParticipant } from '../terminManager';
+import { ChatInputCommandInteraction, TextChannel, PermissionFlagsBits } from 'discord.js';
+import terminManager, { loadEvents, saveEvents } from '../terminManager';
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('termin')
-    .setDescription('Erstellt eine neue Terminsuche')
+    .setName('adduser')
+    .setDescription('Fügt Benutzer zu einer existierenden Terminsuche hinzu')
     .addStringOption(option => 
-      option.setName('titel')
-        .setDescription('Titel des Events (z.B. "ARMA 3")')
-        .setRequired(true))
-    .addStringOption(option => 
-      option.setName('datum')
-        .setDescription('Datum des Events (z.B. "25.04.2025" oder "<t:1744819440:D>")')
-        .setRequired(true))
-    .addStringOption(option => 
-      option.setName('uhrzeit')
-        .setDescription('Uhrzeit des Events (z.B. "20:00")')
+      option.setName('eventid')
+        .setDescription('Die Event-ID der Terminsuche (z.B. aus dem Footer der Nachricht)')
         .setRequired(true))
     .addStringOption(option => 
       option.setName('teilnehmer')
-        .setDescription('IDs der Teilnehmer oder Rollen (@user1, @rolle1)')
-        .setRequired(true))
-    .addStringOption(option => 
-      option.setName('relatives_datum')
-        .setDescription('Relatives Datum (z.B. "<t:1744819440:R>" für "in 3 Tagen")')
-        .setRequired(false))
-    .addStringOption(option => 
-      option.setName('kommentar')
-        .setDescription('Optionaler Kommentar zum Termin')
-        .setRequired(false)),
+        .setDescription('Zu hinzufügende Teilnehmer oder Rollen (@user1, @rolle1)')
+        .setRequired(true)),
   
   async execute(interaction: ChatInputCommandInteraction) {
     try {
@@ -41,14 +23,29 @@ module.exports = {
         return;
       }
       
-      const title = interaction.options.getString('titel') || '';
-      const date = interaction.options.getString('datum') || '';
-      const time = interaction.options.getString('uhrzeit') || '';
-      const relativeDate = interaction.options.getString('relatives_datum');
-      const comment = interaction.options.getString('kommentar');
+      const eventId = interaction.options.getString('eventid') || '';
       const participantsString = interaction.options.getString('teilnehmer') || '';
       
       await interaction.deferReply({ ephemeral: true });
+      
+      // Event laden
+      const events = loadEvents();
+      const eventIndex = events.findIndex(e => e.id === eventId);
+      
+      if (eventIndex === -1) {
+        await interaction.editReply({ content: `Kein Event mit der ID ${eventId} gefunden.` });
+        return;
+      }
+      
+      const event = events[eventIndex];
+      
+      // Prüfen, ob das Event noch aktiv ist
+      if (event.status !== 'active') {
+        await interaction.editReply({ 
+          content: `Diese Terminsuche hat den Status "${event.status}". Du kannst nur aktive Terminsuchen bearbeiten.`
+        });
+        return;
+      }
       
       // Überprüfen, ob die Interaktion in einem Server stattfindet
       if (!interaction.guild) {
@@ -72,6 +69,9 @@ module.exports = {
       if (roleIds.length > 0) {
         console.log(`Verarbeite ${roleIds.length} Rollen...`);
         
+        // Hole alle Mitglieder der Guild
+        await interaction.guild.members.fetch();
+        
         for (const roleId of roleIds) {
           try {
             const role = await interaction.guild.roles.fetch(roleId);
@@ -83,18 +83,11 @@ module.exports = {
             processedRoleNames.push(role.name);
             console.log(`Verarbeite Rolle: ${role.name} mit ${role.members.size} Mitgliedern`);
             
-            // Hole alle Mitglieder der Rolle
-            await interaction.guild.members.fetch(); // Wichtig: Lade alle Guild-Mitglieder neu
-            
-            // Holen der Rolle erneut nach dem Neuladen aller Mitglieder
-            const refreshedRole = await interaction.guild.roles.fetch(roleId);
-            if (!refreshedRole) continue;
-            
             // Channel für Berechtigungsprüfung
-            const channel = interaction.channel as TextChannel;
+            const channel = await interaction.guild.channels.fetch(event.channelId) as TextChannel;
             
             // Verarbeite alle Mitglieder der Rolle
-            for (const [memberId, member] of refreshedRole.members) {
+            for (const [memberId, member] of role.members) {
               console.log(`Prüfe Mitglied: ${member.user.username}`);
               
               // Überspringe, wenn Benutzer bereits in der Liste ist
@@ -126,27 +119,32 @@ module.exports = {
         return;
       }
       
-      // Event erstellen
-      const eventId = await createEvent(
-        title,
-        date,
-        time,
-        interaction.user.id,
-        allUserIds,
-        interaction.channel as TextChannel,
-        relativeDate,
-        comment
-      );
+      // Bereits vorhandene Teilnehmer filtern
+      const existingUserIds = event.participants.map(p => p.userId);
+      const newUserIds = allUserIds.filter(id => !existingUserIds.includes(id));
+      
+      if (newUserIds.length === 0) {
+        await interaction.editReply({ content: "Alle angegebenen Teilnehmer sind bereits Teil dieser Terminsuche." });
+        return;
+      }
       
       // Teilnehmer einladen
       let successCount = 0;
       let failCount = 0;
       let failedUsernames: string[] = [];
       
-      for (const userId of allUserIds) {
+      for (const userId of newUserIds) {
         try {
           const user = await interaction.client.users.fetch(userId);
-          await inviteParticipant(eventId, user, title, date, time, relativeDate, comment);
+          await terminManager.inviteParticipant(
+            eventId, 
+            user, 
+            event.title, 
+            event.date, 
+            event.time, 
+            event.relativeDate, 
+            event.comment
+          );
           successCount++;
         } catch (error) {
           console.error(`Fehler beim Einladen von Benutzer ${userId}:`, error);
@@ -174,13 +172,16 @@ module.exports = {
       }
       
       await interaction.editReply(
-        `Terminsuche erstellt!\n` +
-        `✅ ${successCount} Teilnehmer erfolgreich eingeladen.\n` +
+        `Teilnehmer zur Terminsuche "${event.title}" hinzugefügt!\n` +
+        `✅ ${successCount} neue Teilnehmer erfolgreich eingeladen.\n` +
         (failCount > 0 ? `❌ ${failCount} Einladungen konnten nicht gesendet werden.${failedSummary}` : '') +
         rolesSummary
       );
+      
+      // Aktualisiere die Event-Nachricht im Server
+      await terminManager.updateEventMessage(eventId);
     } catch (mainError) {
-      console.error("Unerwarteter Fehler im Terminbefehl:", mainError);
+      console.error("Unerwarteter Fehler im adduser-Befehl:", mainError);
       
       try {
         if (interaction.deferred) {

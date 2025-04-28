@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { Event, Participant } from './types';
 
+
 const dataFolder = path.join(__dirname, '..', 'data');
 const eventsFile = path.join(dataFolder, 'events.json');
 
@@ -59,7 +60,7 @@ export async function createEvent(
   const serverEmbed = new EmbedBuilder()
     .setColor('#0099ff')
     .setTitle(`Terminplanung: ${title}`)
-    .setDescription(`Termin für ${date} um ${time} Uhr.${relativeDate ? `\nDas ist ${relativeDate}` : ''}${comment ? `\n\n**Kommentar:** ${comment}` : ''}\nStatus der Teilnehmer:`)
+    .setDescription(`Termin für ${date} um ${time} Uhr.${relativeDate ? `\nDas ist ${relativeDate}` : ''}${comment ? `\n\n**Kommentar:** ${comment}` : ''}\n`)
     .setTimestamp()
     .setFooter({ text: `Event ID: ${eventId} • Status: Aktiv` });
   
@@ -464,71 +465,121 @@ export async function sendReminders(interaction: ButtonInteraction, eventId: str
 
 // Starterinnerung an zugesagte Teilnehmer senden
 export async function sendStartReminder(interaction: ButtonInteraction, eventId: string): Promise<void> {
-  const events = loadEvents();
-  const eventIndex = events.findIndex(e => e.id === eventId);
-  
-  if (eventIndex === -1) {
-    await interaction.reply({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
-    return;
-  }
-  
-  const event = events[eventIndex];
-  
-  // Prüfen, ob das Event noch aktiv ist
-  if (event.status !== 'active') {
-    await interaction.reply({ 
-      content: `Diese Terminsuche wurde ${event.status === 'closed' ? 'geschlossen' : 'abgebrochen'}.`, 
-      ephemeral: true 
-    });
-    return;
-  }
-  
-  // Teilnehmer finden, die zugesagt haben oder eine andere Uhrzeit angegeben haben
-  const eligibleParticipants = event.participants.filter(p => 
-    p.status === 'accepted' || 
-    p.status === 'acceptedWithoutTime' || 
-    p.status === 'otherTime'
-  );
-  
-  if (eligibleParticipants.length === 0) {
-    await interaction.reply({ 
-      content: "Es gibt keine Teilnehmer, die bereits zugesagt haben oder eine alternative Uhrzeit angegeben haben.", 
-      ephemeral: true 
-    });
-    return;
-  }
-  
-  // Starterinnerung an jeden zugesagten Teilnehmer senden
-  let successCount = 0;
-  let failCount = 0;
-  
-  // Embed für Starterinnerung erstellen
-  const startReminderEmbed = new EmbedBuilder()
-    .setColor('#FEE75C') 
-    .setTitle(`🎮 Termin ${event.title} beginnt gleich!`)
-    .setDescription(`Der Termin beginnt am ${event.date} um ${event.time} Uhr.${event.relativeDate ? `\nDas ist ${event.relativeDate}` : ''}\n\n⏰ Bitte bereite dich auf den Start vor!${event.comment ? `\n\n**Kommentar:** ${event.comment}` : ''}`)
-    .setTimestamp()
-    .setFooter({ text: `Event ID: ${eventId}` });
-  
-  // Sende Starterinnerungen
-  for (const participant of eligibleParticipants) {
+  try {
+    const events = loadEvents();
+    const eventIndex = events.findIndex(e => e.id === eventId);
+    
+    if (eventIndex === -1) {
+      await interaction.reply({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
+      return;
+    }
+    
+    const event = events[eventIndex];
+    
+    // Prüfen, ob das Event noch aktiv ist
+    if (event.status !== 'active') {
+      await interaction.reply({ 
+        content: `Diese Terminsuche wurde ${event.status === 'closed' ? 'geschlossen' : 'abgebrochen'}.`, 
+        ephemeral: true 
+      });
+      return;
+    }
+    
+    // Teilnehmer finden, die zugesagt haben oder eine andere Uhrzeit angegeben haben
+    const eligibleParticipants = event.participants.filter(p => 
+      p.status === 'accepted' || 
+      p.status === 'acceptedWithoutTime' || 
+      p.status === 'otherTime'
+    );
+    
+    if (eligibleParticipants.length === 0) {
+      await interaction.reply({ 
+        content: "Es gibt keine Teilnehmer, die bereits zugesagt haben oder eine alternative Uhrzeit angegeben haben.", 
+        ephemeral: true 
+      });
+      return;
+    }
+    
+    // Starterinnerung an jeden zugesagten Teilnehmer senden
+    let successCount = 0;
+    let failCount = 0;
+    let errorDetails = "";
+    
+    // Embed für Starterinnerung erstellen
+    const startReminderEmbed = new EmbedBuilder()
+      .setColor('#FEE75C') 
+      .setTitle(`🎮 Termin ${event.title} beginnt gleich!`)
+      .setDescription(`Der Termin beginnt am ${event.date} um ${event.time} Uhr.${event.relativeDate ? `\nDas ist ${event.relativeDate}` : ''}\n\n⏰ Bitte bereite dich auf den Start vor!${event.comment ? `\n\n**Kommentar:** ${event.comment}` : ''}`)
+      .setTimestamp()
+      .setFooter({ text: `Event ID: ${eventId}` });
+    
+    // Sende Starterinnerungen
+    for (const participant of eligibleParticipants) {
+      try {
+        const user = await interaction.client.users.fetch(participant.userId);
+        if (!user) {
+          console.error(`Benutzer mit ID ${participant.userId} konnte nicht gefunden werden.`);
+          failCount++;
+          errorDetails += `- Benutzer ${participant.username} (${participant.userId}) konnte nicht gefunden werden.\n`;
+          continue;
+        }
+        
+        await user.send({ embeds: [startReminderEmbed] });
+        successCount++;
+      } catch (error) {
+        console.error(`Konnte keine Starterinnerung an ${participant.username} senden:`, error);
+        failCount++;
+        errorDetails += `- Fehler beim Senden an ${participant.username}: ${error instanceof Error ? error.message : 'Unbekannter Fehler'}\n`;
+      }
+    }
+    
+    // Rückmeldung an den Admin
     try {
-      const user = await interaction.client.users.fetch(participant.userId);
-      await user.send({ embeds: [startReminderEmbed] });
-      successCount++;
-    } catch (error) {
-      console.error(`Konnte keine Starterinnerung an ${participant.username} senden:`, error);
-      failCount++;
+      let responseContent = `Starterinnerungen gesendet!\n` +
+        `✅ ${successCount} Starterinnerungen erfolgreich versandt.\n` +
+        (failCount > 0 ? `❌ ${failCount} Starterinnerungen konnten nicht zugestellt werden.` : '');
+      
+      // Bei Fehlern Details hinzufügen (aber nur wenn es nicht zu lang wird)
+      if (failCount > 0 && errorDetails.length < 1800) {
+        responseContent += `\n\nFehlerdetails:\n${errorDetails}`;
+      }
+      
+      // Prüfen, ob bereits auf die Interaktion geantwortet wurde
+      if (interaction.replied) {
+        await interaction.followUp({ content: responseContent, ephemeral: true });
+      } else {
+        await interaction.reply({ content: responseContent, ephemeral: true });
+      }
+    } catch (replyError) {
+      console.error('Fehler beim Antworten auf die Interaktion:', replyError);
+      
+      // Letzte Rettung: Versuche, eine Antwort zu senden, egal was passiert
+      try {
+        if (!interaction.replied) {
+          await interaction.reply({ 
+            content: "Starterinnerungen wurden versendet, aber es gab ein Problem bei der Rückmeldung.", 
+            ephemeral: true 
+          });
+        }
+      } catch (finalError) {
+        console.error('Kritischer Fehler bei der Interaktion:', finalError);
+      }
+    }
+  } catch (mainError) {
+    console.error('KRITISCHER FEHLER BEI STARTERINNERUNG:', mainError);
+    
+    // Versuche, wenigstens irgendeine Rückmeldung zu geben
+    try {
+      if (!interaction.replied) {
+        await interaction.reply({ 
+          content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.", 
+          ephemeral: true 
+        });
+      }
+    } catch (e) {
+      console.error('Konnte auch keine Fehlermeldung senden:', e);
     }
   }
-  
-  // Rückmeldung an den Admin
-  await interaction.reply({ 
-    content: `Starterinnerungen gesendet!\n` +
-      `✅ ${successCount} Starterinnerungen erfolgreich versandt.\n` +
-      (failCount > 0 ? `❌ ${failCount} Starterinnerungen konnten nicht zugestellt werden.` : ''),
-    ephemeral: true 
-  });
 }
 
 // Modal für alternative Uhrzeit anzeigen
@@ -701,5 +752,9 @@ export default {
   sendReminders,
   sendStartReminder,
   cancelEvent,
-  closeEvent
+  closeEvent,
+  loadEvents,
+  saveEvents
 };
+
+export { loadEvents, saveEvents };

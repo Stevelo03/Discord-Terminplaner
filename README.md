@@ -12,11 +12,13 @@ Eigentlich habe ich diesen Bot entwickelt weil ich in meinem Freundeskreis das P
 - **Live-Statusübersicht**: Echtzeit-Aktualisierung der Teilnehmerstatus im Server-Channel
 
 ### Erweiterte Features
+- **Rollenunterstützung**: Lade ganze Teams durch Erwähnung einer Rolle ein
+- **Terminverwaltung**: Füge nachträglich Teilnehmer hinzu oder entferne sie
 - **Discord Zeitstempel**: Unterstützung für relative und absolute Discord-Zeitangaben (zeigt die Zeit in jeder Zeitzone korrekt an)
 - **Alternative Uhrzeiten**: Teilnehmer können alternative Zeiten vorschlagen, wenn der Haupttermin nicht passt
 - **Erinnerungssystem**: 
   - Senden Sie Erinnerungen an Teilnehmer, die noch nicht geantwortet haben
-  - Spezielle Starterinnerung kurz vor Terminbeginn
+  - Spezielle Starterinnerung kurz vor Terminbeginn an alle zugesagten Teilnehmer
 - **Multi-Server Support**: Funktioniert auf beliebig vielen Discord-Servern gleichzeitig
 - **Automatische Befehlsregistrierung**: Registriert sich automatisch auf neuen Servern
 
@@ -59,18 +61,29 @@ Erstellt eine neue Terminsuche mit folgenden Parametern:
   - `titel`: Name des Events (z.B. "ARMA 3 Session")
   - `datum`: Datum des Events (normale Angabe oder Discord-Zeitstempel)
   - `uhrzeit`: Uhrzeit des Events
-  - `teilnehmer`: Liste von Teilnehmern (@mention)
+  - `teilnehmer`: Liste von Teilnehmern oder Rollen (@user1, @rolle1)
 - **Optionale Felder**:
   - `relatives_datum`: Discord-Zeitstempel für relative Anzeige
   - `kommentar`: Zusätzliche Informationen zum Termin
 
-### `/terminbot-hilfe`
+### `/adduser`
+Fügt Teilnehmer zu einer bestehenden Terminsuche hinzu:
+- `eventid`: Die Event-ID der Terminsuche (aus dem Footer der Nachricht)
+- `teilnehmer`: Zu hinzufügende Teilnehmer oder Rollen (@user1, @rolle1)
+
+### `/removeuser`
+Entfernt Teilnehmer aus einer bestehenden Terminsuche:
+- `eventid`: Die Event-ID der Terminsuche (aus dem Footer der Nachricht)
+- `teilnehmer`: Zu entfernende Teilnehmer oder Rollen (@user1, @rolle1)
+
+### `/help`
 Zeigt eine umfassende Hilfenachricht mit allen Funktionen und Features
 
 ## Admin-Features ⚙️
 
 Nur Server-Administratoren können:
 - Termine erstellen und verwalten
+- Teilnehmer hinzufügen oder entfernen
 - Erinnerungen an ausstehende Teilnehmer senden
 - Starterinnerungen kurz vor Terminbeginn versenden
 - Terminsuchen abbrechen oder schließen

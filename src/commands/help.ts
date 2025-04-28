@@ -3,7 +3,7 @@ import { CommandInteraction, EmbedBuilder } from 'discord.js';
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('terminbot-hilfe')
+    .setName('help')
     .setDescription('Zeigt Hilfe für den Terminplanungsbot an'),
   
   async execute(interaction: CommandInteraction) {
@@ -22,16 +22,36 @@ module.exports = {
             '- `titel`: Name des Events (z.B. "ARMA 3")\n' +
             '- `datum`: Datum des Events (z.B. "25.04.2025" oder Discord-Zeitstempel "<t:1744819440:D>")\n' +
             '- `uhrzeit`: Uhrzeit des Events (z.B. "20:00")\n' +
-            '- `teilnehmer`: Liste von Nutzern (z.B. "@Nutzer1 @Nutzer2")\n\n' +
+            '- `teilnehmer`: Liste von Nutzern oder Rollen (z.B. "@Nutzer1 @TeamRolle")\n\n' +
             '**Optionale Felder:**\n' +
             '- `relatives_datum`: Relatives Datum (z.B. "<t:1744819440:R>" für "in 3 Tagen")\n' +
             '- `kommentar`: Optionaler Kommentar zum Termin' 
+        },
+        {
+          name: '/adduser',
+          value: 'Fügt nachträglich Teilnehmer zu einem bestehenden Termin hinzu'
+        },
+        {
+          name: 'Parameter für /adduser',
+          value: '- `eventid`: Die Event-ID aus dem Footer der Terminnachricht\n' +
+                 '- `teilnehmer`: Zu hinzufügende Teilnehmer oder Rollen (z.B. "@Nutzer1 @TeamRolle")'
+        },
+        {
+          name: '/removeuser',
+          value: 'Entfernt Teilnehmer aus einem bestehenden Termin'
+        },
+        {
+          name: 'Parameter für /removeuser',
+          value: '- `eventid`: Die Event-ID aus dem Footer der Terminnachricht\n' +
+                 '- `teilnehmer`: Zu entfernende Teilnehmer oder Rollen (z.B. "@Nutzer1 @TeamRolle")'
         },
         { 
           name: 'Admin-Funktionen', 
           value: 'Nur Administratoren können:\n' +
             '- Termine erstellen\n' +
+            '- Teilnehmer hinzufügen oder entfernen\n' +
             '- Erinnerungen senden (an alle, die noch nicht geantwortet haben)\n' +
+            '- Starterinnerungen senden (an alle zugesagten Teilnehmer)\n' +
             '- Terminsuchen abbrechen\n' +
             '- Terminsuchen schließen' 
         },
@@ -45,9 +65,11 @@ module.exports = {
         {
           name: 'Besondere Features',
           value: '- Antworten sowohl per DM als auch direkt im Channel möglich\n' +
+            '- Rollenunterstützung: Lade ganze Teams mit einem Befehl ein\n' +
             '- Automatische Aktualisierung der Teilnehmertabelle im Server\n' +
             '- Unterstützung für Discord-Zeitstempel (automatische Anpassung an Zeitzonen)\n' +
             '- Separate Erinnerungsfunktion für ausstehende Antworten\n' +
+            '- Terminstart-Erinnerung für zugesagte Teilnehmer\n' +
             '- Automatische Registrierung der Befehle auf allen Servern'
         },
         {

@@ -56,3 +56,45 @@ export async function registerCommandsForAllGuilds(client: any) {
     await registerCommands(guildId);
   }
 }
+
+// Funktion zum Löschen aller Befehle
+export async function deleteAllCommands(guildId?: string) {
+  const rest = new REST().setToken(process.env.BOT_TOKEN || '');
+
+  try {
+    console.log(`Starte das Löschen aller Slash-Befehle${guildId ? ` für Server ${guildId}` : ' für alle Server'}.`);
+
+    // Wenn eine spezifische Guild-ID übergeben wurde, nur für diese Befehle löschen
+    if (guildId) {
+      await rest.put(
+        Routes.applicationGuildCommands(
+          process.env.CLIENT_ID || '',
+          guildId
+        ),
+        { body: [] }, // Leeres Array für Befehle = alle Befehle löschen
+      );
+      console.log(`Slash-Befehle für Server ${guildId} erfolgreich gelöscht!`);
+    } else {
+      // Globale Befehle löschen
+      await rest.put(
+        Routes.applicationCommands(process.env.CLIENT_ID || ''),
+        { body: [] },
+      );
+      console.log('Globale Slash-Befehle erfolgreich gelöscht!');
+    }
+  } catch (error) {
+    console.error('Fehler beim Löschen der Slash-Befehle:', error);
+  }
+}
+
+// Funktion zum Löschen der Befehle für alle Guilds
+export async function deleteCommandsForAllGuilds(client: any) {
+  const guildIds = client.guilds.cache.map((guild: any) => guild.id);
+  
+  for (const guildId of guildIds) {
+    await deleteAllCommands(guildId);
+  }
+
+  // Auch globale Befehle löschen
+  await deleteAllCommands();
+}

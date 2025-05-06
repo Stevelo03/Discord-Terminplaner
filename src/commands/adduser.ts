@@ -136,7 +136,8 @@ module.exports = {
       for (const userId of newUserIds) {
         try {
           const user = await interaction.client.users.fetch(userId);
-          await terminManager.inviteParticipant(
+          // ÄNDERUNG: Fange den Rückgabewert auf
+          const success = await terminManager.inviteParticipant(
             eventId, 
             user, 
             event.title, 
@@ -145,7 +146,13 @@ module.exports = {
             event.relativeDate, 
             event.comment
           );
-          successCount++;
+          
+          if (success) {
+            successCount++;
+          } else {
+            failCount++;
+            failedUsernames.push(user.username);
+          }
         } catch (error) {
           console.error(`Fehler beim Einladen von Benutzer ${userId}:`, error);
           failCount++;

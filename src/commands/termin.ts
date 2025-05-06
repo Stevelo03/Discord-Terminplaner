@@ -146,8 +146,23 @@ module.exports = {
       for (const userId of allUserIds) {
         try {
           const user = await interaction.client.users.fetch(userId);
-          await inviteParticipant(eventId, user, title, date, time, relativeDate, comment);
-          successCount++;
+          // ÄNDERUNG: Fange den Rückgabewert auf
+          const success = await inviteParticipant(
+            eventId, 
+            user, 
+            title, 
+            date, 
+            time, 
+            relativeDate, 
+            comment
+          );
+          
+          if (success) {
+            successCount++;
+          } else {
+            failCount++;
+            failedUsernames.push(user.username);
+          }
         } catch (error) {
           console.error(`Fehler beim Einladen von Benutzer ${userId}:`, error);
           failCount++;

@@ -142,13 +142,13 @@ export async function inviteParticipant(
   time: string,
   relativeDate?: string | null,
   comment?: string | null
-): Promise<void> {
+): Promise<boolean> { // Änderung: Rückgabewert zu boolean
   const events = loadEvents();
   const eventIndex = events.findIndex(e => e.id === eventId);
   
   if (eventIndex === -1) {
     console.error(`Event mit ID ${eventId} nicht gefunden.`);
-    return;
+    return false; // Fehlschlag
   }
   
   // Teilnehmer zur Liste hinzufügen
@@ -213,16 +213,20 @@ export async function inviteParticipant(
         components: []
       });
     }
+    
+    saveEvents(events);
+    
+    // Server-Channel-Nachricht aktualisieren
+    await updateEventMessage(eventId);
+    
+    return true; // Erfolg
   } catch (error) {
     console.error(`Konnte keine DM an ${user.username} senden:`, error);
     // Teilnehmer aus der Liste entfernen
     events[eventIndex].participants = events[eventIndex].participants.filter(p => p.userId !== user.id);
+    saveEvents(events);
+    return false; // Fehlschlag
   }
-  
-  saveEvents(events);
-  
-  // Server-Channel-Nachricht aktualisieren
-  await updateEventMessage(eventId);
 }
 
 // Event-Nachricht im Server aktualisieren
@@ -246,6 +250,13 @@ export async function updateEventMessage(eventId: string): Promise<void> {
   try {
     const message = await channel.messages.fetch(event.messageId);
     
+    // Status-Zähler für jeden Teilnehmerstatus
+    let acceptedCount = 0;
+    let declinedCount = 0;
+    let acceptedWithoutTimeCount = 0;
+    let pendingCount = 0;
+    let otherTimeCount = 0;
+    
     // Status-Text für jeden Teilnehmer
     let participantsText = "";
     for (const participant of event.participants) {
@@ -254,25 +265,39 @@ export async function updateEventMessage(eventId: string): Promise<void> {
       switch (participant.status) {
         case 'accepted':
           statusText = "✅ Zugesagt";
+          acceptedCount++;
           break;
         case 'acceptedWithoutTime':
           statusText = "⏱️ Zugesagt ohne Uhrzeitgarantie";
+          acceptedWithoutTimeCount++;
           break;
         case 'declined':
           statusText = "❌ Abgesagt";
+          declinedCount++;
           break;
         case 'otherTime':
           statusText = `🕒 Andere Uhrzeit: ${participant.alternativeTime}`;
+          otherTimeCount++;
           break;
         default:
           statusText = "⏳ Warte auf Antwort";
+          pendingCount++;
       }
       
       participantsText += `<@${participant.userId}>: ${statusText}\n`;
     }
     
+    // Teilnehmeranzahl für die Überschrift
+    const totalParticipants = event.participants.length;
+    
+    // Zusammenfassung der Status-Zahlen
+    const statusSummary = `| ✅ ${acceptedCount} | ❌ ${declinedCount} | ⏱️ ${acceptedWithoutTimeCount} | 🕒 ${otherTimeCount} | ⏳ ${pendingCount} | `;
+    
     if (participantsText === "") {
       participantsText = "Keine Teilnehmer eingeladen.";
+    } else {
+      // Füge Statusübersicht mit Abstand hinzu
+      participantsText += `\n${statusSummary}`;
     }
     
     // Status als Text
@@ -293,14 +318,14 @@ export async function updateEventMessage(eventId: string): Promise<void> {
       description += `\n\n**Kommentar:** ${event.comment}`;
     }
     
-    description += `\nStatus der Teilnehmer:`;
+    description += `\n\nStatus der Teilnehmer:`;
     
     // Embed für Server-Channel aktualisieren
     const updatedEmbed = new EmbedBuilder()
       .setColor('#0099ff')
       .setTitle(`Terminplanung: ${event.title}`)
       .setDescription(description)
-      .addFields({ name: 'Teilnehmer', value: participantsText })
+      .addFields({ name: `Teilnehmer (${totalParticipants})`, value: participantsText }) // Aktualisierte Zeile
       .setTimestamp()
       .setFooter({ text: `Event ID: ${event.id} • Status: ${statusText}` });
     
@@ -466,11 +491,17 @@ export async function sendReminders(interaction: ButtonInteraction, eventId: str
 // Starterinnerung an zugesagte Teilnehmer senden
 export async function sendStartReminder(interaction: ButtonInteraction, eventId: string): Promise<void> {
   try {
+    // Sofort auf die Interaktion antworten, um den Timeout zu vermeiden
+    await interaction.reply({ 
+      content: "Sende Starterinnerungen an alle zugesagten Teilnehmer...", 
+      ephemeral: true 
+    });
+
     const events = loadEvents();
     const eventIndex = events.findIndex(e => e.id === eventId);
     
     if (eventIndex === -1) {
-      await interaction.reply({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
+      await interaction.followUp({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
       return;
     }
     
@@ -478,7 +509,7 @@ export async function sendStartReminder(interaction: ButtonInteraction, eventId:
     
     // Prüfen, ob das Event noch aktiv ist
     if (event.status !== 'active') {
-      await interaction.reply({ 
+      await interaction.followUp({ 
         content: `Diese Terminsuche wurde ${event.status === 'closed' ? 'geschlossen' : 'abgebrochen'}.`, 
         ephemeral: true 
       });
@@ -493,7 +524,7 @@ export async function sendStartReminder(interaction: ButtonInteraction, eventId:
     );
     
     if (eligibleParticipants.length === 0) {
-      await interaction.reply({ 
+      await interaction.followUp({ 
         content: "Es gibt keine Teilnehmer, die bereits zugesagt haben oder eine alternative Uhrzeit angegeben haben.", 
         ephemeral: true 
       });
@@ -512,6 +543,8 @@ export async function sendStartReminder(interaction: ButtonInteraction, eventId:
       .setDescription(`Der Termin beginnt am ${event.date} um ${event.time} Uhr.${event.relativeDate ? `\nDas ist ${event.relativeDate}` : ''}\n\n⏰ Bitte bereite dich auf den Start vor!${event.comment ? `\n\n**Kommentar:** ${event.comment}` : ''}`)
       .setTimestamp()
       .setFooter({ text: `Event ID: ${eventId}` });
+
+
     
     // Sende Starterinnerungen
     for (const participant of eligibleParticipants) {
@@ -533,45 +566,29 @@ export async function sendStartReminder(interaction: ButtonInteraction, eventId:
       }
     }
     
-    // Rückmeldung an den Admin
-    try {
-      let responseContent = `Starterinnerungen gesendet!\n` +
-        `✅ ${successCount} Starterinnerungen erfolgreich versandt.\n` +
-        (failCount > 0 ? `❌ ${failCount} Starterinnerungen konnten nicht zugestellt werden.` : '');
-      
-      // Bei Fehlern Details hinzufügen (aber nur wenn es nicht zu lang wird)
-      if (failCount > 0 && errorDetails.length < 1800) {
-        responseContent += `\n\nFehlerdetails:\n${errorDetails}`;
-      }
-      
-      // Prüfen, ob bereits auf die Interaktion geantwortet wurde
-      if (interaction.replied) {
-        await interaction.followUp({ content: responseContent, ephemeral: true });
-      } else {
-        await interaction.reply({ content: responseContent, ephemeral: true });
-      }
-    } catch (replyError) {
-      console.error('Fehler beim Antworten auf die Interaktion:', replyError);
-      
-      // Letzte Rettung: Versuche, eine Antwort zu senden, egal was passiert
-      try {
-        if (!interaction.replied) {
-          await interaction.reply({ 
-            content: "Starterinnerungen wurden versendet, aber es gab ein Problem bei der Rückmeldung.", 
-            ephemeral: true 
-          });
-        }
-      } catch (finalError) {
-        console.error('Kritischer Fehler bei der Interaktion:', finalError);
-      }
+    // Abschließende Information als Follow-up senden
+    let responseContent = `Starterinnerungen gesendet!\n` +
+      `✅ ${successCount} Starterinnerungen erfolgreich versandt.\n` +
+      (failCount > 0 ? `❌ ${failCount} Starterinnerungen konnten nicht zugestellt werden.` : '');
+    
+    if (failCount > 0 && errorDetails.length < 1800) {
+      responseContent += `\n\nFehlerdetails:\n${errorDetails}`;
     }
+    
+    await interaction.followUp({ content: responseContent, ephemeral: true });
   } catch (mainError) {
     console.error('KRITISCHER FEHLER BEI STARTERINNERUNG:', mainError);
     
-    // Versuche, wenigstens irgendeine Rückmeldung zu geben
     try {
+      // Wenn noch keine Antwort gesendet wurde, jetzt antworten
       if (!interaction.replied) {
         await interaction.reply({ 
+          content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.", 
+          ephemeral: true 
+        });
+      } else {
+        // Wenn bereits geantwortet wurde, ein Follow-up senden
+        await interaction.followUp({ 
           content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.", 
           ephemeral: true 
         });

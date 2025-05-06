@@ -4,7 +4,12 @@ import fs from 'fs';
 import path from 'path';
 import { Command } from './types';
 import { PermissionFlagsBits } from 'discord.js';
-import { registerCommands, registerCommandsForAllGuilds } from './deploy-commands';
+import { 
+  registerCommands, 
+  registerCommandsForAllGuilds, 
+  deleteAllCommands, 
+  deleteCommandsForAllGuilds 
+} from './deploy-commands';
 
 config();
 
@@ -110,9 +115,13 @@ client.on(Events.GuildCreate, async guild => {
 client.once(Events.ClientReady, async () => {
   console.log(`Eingeloggt als ${client.user?.tag}!`);
   
-  // Registriere Befehle für alle Server, in denen der Bot bereits ist
+  // Zuerst alle bestehenden Befehle löschen
+  await deleteCommandsForAllGuilds(client);
+  console.log('Alle bestehenden Befehle für alle Server erfolgreich gelöscht.');
+  
+  // Dann neue Befehle registrieren
   await registerCommandsForAllGuilds(client);
-  console.log('Befehle für alle existierenden Server erfolgreich registriert.');
+  console.log('Befehle für alle existierenden Server erfolgreich neu registriert.');
 });
 
 client.login(process.env.BOT_TOKEN);

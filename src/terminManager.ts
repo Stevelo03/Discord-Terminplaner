@@ -388,104 +388,132 @@ export async function updateEventMessage(eventId: string): Promise<void> {
 
 // Erinnerung an nicht antwortende Teilnehmer senden
 export async function sendReminders(interaction: ButtonInteraction, eventId: string): Promise<void> {
-  const events = loadEvents();
-  const eventIndex = events.findIndex(e => e.id === eventId);
-  
-  if (eventIndex === -1) {
-    await interaction.reply({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
-    return;
-  }
-  
-  const event = events[eventIndex];
-  
-  // Prüfen, ob das Event noch aktiv ist
-  if (event.status !== 'active') {
+  try {
+    // Sofort auf die Interaktion antworten, um den Timeout zu vermeiden
     await interaction.reply({ 
-      content: `Diese Terminsuche wurde ${event.status === 'closed' ? 'geschlossen' : 'abgebrochen'}.`, 
+      content: "Sende Erinnerungen an Teilnehmer ohne Antwort...", 
       ephemeral: true 
     });
-    return;
-  }
-  
-  // Teilnehmer ohne Antwort finden
-  const pendingParticipants = event.participants.filter(p => p.status === 'pending');
-  
-  if (pendingParticipants.length === 0) {
-    await interaction.reply({ 
-      content: "Es gibt keine Teilnehmer, die noch nicht geantwortet haben.", 
-      ephemeral: true 
-    });
-    return;
-  }
-  
-  // Erinnerung an jeden Teilnehmer ohne Antwort senden
-  let successCount = 0;
-  let failCount = 0;
-  
-  // Beschreibung mit optionalem relativem Datum und Kommentar für Erinnerung
-  let reminderDescription = `Erinnerung: Du wurdest eingeladen am ${event.date} an ${event.title} teilzunehmen, um ${event.time} Uhr.`;
-  
-  if (event.relativeDate) {
-    reminderDescription += `\nDas ist ${event.relativeDate}`;
-  }
-  
-  if (event.comment) {
-    reminderDescription += `\n\n**Kommentar:** ${event.comment}`;
-  }
-  
-  reminderDescription += `\n\n**Bitte antworte auf die Einladung.**`;
-  
-  // Embed für Erinnerung erstellen
-  const reminderEmbed = new EmbedBuilder()
-    .setColor('#FFA500') // Orange für Erinnerung
-    .setTitle(`Erinnerung: Terminsuche ${event.title}`)
-    .setDescription(reminderDescription)
-    .setTimestamp()
-    .setFooter({ text: `Event ID: ${eventId}` });
-  
-  // Buttons für Erinnerung
-  const reminderRow = new ActionRowBuilder<ButtonBuilder>()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId(`respond:${eventId}:accept`)
-        .setLabel('Zusagen')
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`respond:${eventId}:acceptNoTime`)
-        .setLabel('Zusagen ohne Uhrzeitgarantie')
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`respond:${eventId}:otherTime`)
-        .setLabel('Andere Uhrzeit')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`respond:${eventId}:decline`)
-        .setLabel('Absagen')
-        .setStyle(ButtonStyle.Danger)
-    );
-  
-  // Sende Erinnerungen
-  for (const participant of pendingParticipants) {
-    try {
-      const user = await interaction.client.users.fetch(participant.userId);
-      await user.send({
-        embeds: [reminderEmbed],
-        components: [reminderRow]
+
+    const events = loadEvents();
+    const eventIndex = events.findIndex(e => e.id === eventId);
+    
+    if (eventIndex === -1) {
+      await interaction.followUp({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
+      return;
+    }
+    
+    const event = events[eventIndex];
+    
+    // Prüfen, ob das Event noch aktiv ist
+    if (event.status !== 'active') {
+      await interaction.followUp({ 
+        content: `Diese Terminsuche wurde ${event.status === 'closed' ? 'geschlossen' : 'abgebrochen'}.`, 
+        ephemeral: true 
       });
-      successCount++;
-    } catch (error) {
-      console.error(`Konnte keine Erinnerung an ${participant.username} senden:`, error);
-      failCount++;
+      return;
+    }
+    
+    // Teilnehmer ohne Antwort finden
+    const pendingParticipants = event.participants.filter(p => p.status === 'pending');
+    
+    if (pendingParticipants.length === 0) {
+      await interaction.followUp({ 
+        content: "Es gibt keine Teilnehmer, die noch nicht geantwortet haben.", 
+        ephemeral: true 
+      });
+      return;
+    }
+    
+    // Erinnerung an jeden Teilnehmer ohne Antwort senden
+    let successCount = 0;
+    let failCount = 0;
+    
+    // Beschreibung mit optionalem relativem Datum und Kommentar für Erinnerung
+    let reminderDescription = `Erinnerung: Du wurdest eingeladen am ${event.date} an ${event.title} teilzunehmen, um ${event.time} Uhr.`;
+    
+    if (event.relativeDate) {
+      reminderDescription += `\nDas ist ${event.relativeDate}`;
+    }
+    
+    if (event.comment) {
+      reminderDescription += `\n\n**Kommentar:** ${event.comment}`;
+    }
+    
+    reminderDescription += `\n\n**Bitte antworte auf die Einladung.**`;
+    
+    // Embed für Erinnerung erstellen
+    const reminderEmbed = new EmbedBuilder()
+      .setColor('#FFA500') // Orange für Erinnerung
+      .setTitle(`Erinnerung: Terminsuche ${event.title}`)
+      .setDescription(reminderDescription)
+      .setTimestamp()
+      .setFooter({ text: `Event ID: ${eventId}` });
+    
+    // Buttons für Erinnerung
+    const reminderRow = new ActionRowBuilder<ButtonBuilder>()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`respond:${eventId}:accept`)
+          .setLabel('Zusagen')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`respond:${eventId}:acceptNoTime`)
+          .setLabel('Zusagen ohne Uhrzeitgarantie')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`respond:${eventId}:otherTime`)
+          .setLabel('Andere Uhrzeit')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`respond:${eventId}:decline`)
+          .setLabel('Absagen')
+          .setStyle(ButtonStyle.Danger)
+      );
+    
+    // Sende Erinnerungen
+    for (const participant of pendingParticipants) {
+      try {
+        const user = await interaction.client.users.fetch(participant.userId);
+        await user.send({
+          embeds: [reminderEmbed],
+          components: [reminderRow]
+        });
+        successCount++;
+      } catch (error) {
+        console.error(`Konnte keine Erinnerung an ${participant.username} senden:`, error);
+        failCount++;
+      }
+    }
+    
+    // Rückmeldung an den Admin als follow-up
+    await interaction.followUp({ 
+      content: `Erinnerungen gesendet!\n` +
+        `✅ ${successCount} Erinnerungen erfolgreich versandt.\n` +
+        (failCount > 0 ? `❌ ${failCount} Erinnerungen konnten nicht zugestellt werden.` : ''),
+      ephemeral: true 
+    });
+  } catch (mainError) {
+    console.error('KRITISCHER FEHLER BEI ERINNERUNG:', mainError);
+    
+    try {
+      // Wenn noch keine Antwort gesendet wurde, jetzt antworten
+      if (!interaction.replied) {
+        await interaction.reply({ 
+          content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.", 
+          ephemeral: true 
+        });
+      } else {
+        // Wenn bereits geantwortet wurde, ein Follow-up senden
+        await interaction.followUp({ 
+          content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.", 
+          ephemeral: true 
+        });
+      }
+    } catch (e) {
+      console.error('Konnte auch keine Fehlermeldung senden:', e);
     }
   }
-  
-  // Rückmeldung an den Admin
-  await interaction.reply({ 
-    content: `Erinnerungen gesendet!\n` +
-      `✅ ${successCount} Erinnerungen erfolgreich versandt.\n` +
-      (failCount > 0 ? `❌ ${failCount} Erinnerungen konnten nicht zugestellt werden.` : ''),
-    ephemeral: true 
-  });
 }
 
 // Starterinnerung an zugesagte Teilnehmer senden

@@ -58,6 +58,7 @@ module.exports = {
         { 
           name: 'Teilnehmer-Optionen', 
           value: '- **Zusagen**: Bestätigt die Teilnahme zur angegebenen Zeit\n' +
+            '- **Zusagen mit Vorbehalt**: Teilnahme mit gewissen Vorbehalten oder Unsicherheiten\n' +
             '- **Zusagen ohne Uhrzeitgarantie**: Teilnahme wahrscheinlich, aber nicht zeitlich festgelegt\n' +
             '- **Andere Uhrzeit**: Öffnet ein Eingabefeld für alternative Uhrzeiten\n' +
             '- **Absagen**: Lehnt die Teilnahme ab' 
@@ -70,6 +71,7 @@ module.exports = {
             '- Unterstützung für Discord-Zeitstempel (automatische Anpassung an Zeitzonen)\n' +
             '- Separate Erinnerungsfunktion für ausstehende Antworten\n' +
             '- Terminstart-Erinnerung für zugesagte Teilnehmer\n' +
+            '- Flexible Zusage-Optionen für verschiedene Teilnahme-Szenarien\n' +
             '- Automatische Registrierung der Befehle auf allen Servern'
         },
         {

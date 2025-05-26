@@ -15,6 +15,7 @@ Eigentlich habe ich diesen Bot entwickelt weil ich in meinem Freundeskreis das P
 - **Rollenunterstützung**: Lade ganze Teams durch Erwähnung einer Rolle ein
 - **Terminverwaltung**: Füge nachträglich Teilnehmer hinzu oder entferne sie
 - **Discord Zeitstempel**: Unterstützung für relative und absolute Discord-Zeitangaben (zeigt die Zeit in jeder Zeitzone korrekt an)
+- **Flexible Zusage-Optionen**: Verschiedene Antwortmöglichkeiten für unterschiedliche Teilnahme-Szenarien
 - **Alternative Uhrzeiten**: Teilnehmer können alternative Zeiten vorschlagen, wenn der Haupttermin nicht passt
 - **Erinnerungssystem**: 
   - Senden Sie Erinnerungen an Teilnehmer, die noch nicht geantwortet haben
@@ -90,9 +91,10 @@ Nur Server-Administratoren können:
 
 ## Teilnehmer-Optionen 👥
 
-Teilnehmer können:
+Teilnehmer können aus fünf verschiedenen Antwortmöglichkeiten wählen:
 - **Zusagen**: Bestätigt die Teilnahme zur angegebenen Zeit
-- **Zusagen ohne Uhrzeitgarantie**: Teilnahme wahrscheinlich, Zeit noch nicht sicher
+- **Zusagen mit Vorbehalt**: Teilnahme mit gewissen Vorbehalten oder Unsicherheiten
+- **Zusagen ohne Uhrzeitgarantie**: Teilnahme wahrscheinlich, aber pünktliches Erscheinen nicht garantiert
 - **Alternative Uhrzeit vorschlagen**: Andere präferierte Zeit angeben
 - **Absagen**: Teilnahme ablehnen
 
@@ -113,5 +115,6 @@ Teilnehmer können:
 ## Lizenz 📜
 
 AGPL-3.0 Lizenz - siehe LICENSE Datei für Details
+sowie ATTRIBUTION Datei für Details
 
 ---

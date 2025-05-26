@@ -14,7 +14,7 @@ declare module 'discord.js' {
 export interface Participant {
   userId: string;
   username: string;
-  status: 'pending' | 'accepted' | 'acceptedWithoutTime' | 'declined' | 'otherTime';
+  status: 'pending' | 'accepted' | 'acceptedWithoutTime' | 'acceptedWithReservation' | 'declined' | 'otherTime';
   alternativeTime?: string;  // Eigenschaft für alternative Uhrzeit
 }
 

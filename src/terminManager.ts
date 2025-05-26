@@ -85,12 +85,16 @@ export async function createEvent(
         .setStyle(ButtonStyle.Primary)
     );
   
-  // Teilnehmer-Buttons (zweite Reihe)
+  // Teilnehmer-Buttons (zweite Reihe - alle 5 Buttons)
   const responseButtons = new ActionRowBuilder<ButtonBuilder>()
     .addComponents(
       new ButtonBuilder()
         .setCustomId(`respond:${eventId}:accept`)
         .setLabel('Zusagen')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`respond:${eventId}:acceptWithReservation`)
+        .setLabel('Zusagen mit Vorbehalt')
         .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(`respond:${eventId}:acceptNoTime`)
@@ -105,7 +109,7 @@ export async function createEvent(
         .setLabel('Absagen')
         .setStyle(ButtonStyle.Danger)
     );
-  
+
   // Nachricht im Server-Channel senden
   const message = await channel.send({
     embeds: [serverEmbed],
@@ -142,13 +146,13 @@ export async function inviteParticipant(
   time: string,
   relativeDate?: string | null,
   comment?: string | null
-): Promise<boolean> { // Änderung: Rückgabewert zu boolean
+): Promise<boolean> {
   const events = loadEvents();
   const eventIndex = events.findIndex(e => e.id === eventId);
   
   if (eventIndex === -1) {
     console.error(`Event mit ID ${eventId} nicht gefunden.`);
-    return false; // Fehlschlag
+    return false;
   }
   
   // Teilnehmer zur Liste hinzufügen
@@ -156,7 +160,7 @@ export async function inviteParticipant(
     userId: user.id,
     username: user.username,
     status: 'pending',
-    alternativeTime: '' // Neues Feld für alternative Uhrzeit
+    alternativeTime: ''
   });
   
   // Beschreibung mit optionalem relativem Datum und Kommentar
@@ -178,12 +182,16 @@ export async function inviteParticipant(
     .setTimestamp()
     .setFooter({ text: `Event ID: ${eventId}` });
   
-  // Buttons für DM
+  // Buttons für DM (eine Reihe mit allen 5 Buttons)
   const dmRow = new ActionRowBuilder<ButtonBuilder>()
     .addComponents(
       new ButtonBuilder()
         .setCustomId(`respond:${eventId}:accept`)
         .setLabel('Zusagen')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`respond:${eventId}:acceptWithReservation`)
+        .setLabel('Zusagen mit Vorbehalt')
         .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(`respond:${eventId}:acceptNoTime`)
@@ -219,13 +227,13 @@ export async function inviteParticipant(
     // Server-Channel-Nachricht aktualisieren
     await updateEventMessage(eventId);
     
-    return true; // Erfolg
+    return true;
   } catch (error) {
     console.error(`Konnte keine DM an ${user.username} senden:`, error);
     // Teilnehmer aus der Liste entfernen
     events[eventIndex].participants = events[eventIndex].participants.filter(p => p.userId !== user.id);
     saveEvents(events);
-    return false; // Fehlschlag
+    return false;
   }
 }
 
@@ -254,45 +262,49 @@ export async function updateEventMessage(eventId: string): Promise<void> {
     let acceptedCount = 0;
     let declinedCount = 0;
     let acceptedWithoutTimeCount = 0;
+    let acceptedWithReservationCount = 0;
     let pendingCount = 0;
     let otherTimeCount = 0;
     
-// Status-Text für jeden Teilnehmer (UPDATED)
-let participantsText = "";
-for (const participant of event.participants) {
-  let statusText: string;
-  
-  switch (participant.status) {
-    case 'accepted':
-      statusText = "✅ Zugesagt";
-      acceptedCount++;
-      break;
-    case 'acceptedWithoutTime':
-      statusText = "⏱️ Zugesagt ohne Uhrzeitgarantie";
-      acceptedWithoutTimeCount++;
-      break;
-    case 'declined':
-      statusText = "❌ Abgesagt";
-      declinedCount++;
-      break;
-    case 'otherTime':
-      // GEÄNDERT: Neue Formatierung mit 🕒 Symbol
-      statusText = `🕒 Andere Uhrzeit: ${participant.alternativeTime}`;
-      otherTimeCount++;
-      break;
-    default:
-      statusText = "⏳ Warte auf Antwort";
-      pendingCount++;
-  }
-  
-  participantsText += `<@${participant.userId}>: ${statusText}\n`;
-}
+    // Status-Text für jeden Teilnehmer
+    let participantsText = "";
+    for (const participant of event.participants) {
+      let statusText: string;
+      
+      switch (participant.status) {
+        case 'accepted':
+          statusText = "✅ Zugesagt";
+          acceptedCount++;
+          break;
+        case 'acceptedWithReservation':
+          statusText = "☑️ Zugesagt mit Vorbehalt";
+          acceptedWithReservationCount++;
+          break;
+        case 'acceptedWithoutTime':
+          statusText = "⏱️ Zugesagt ohne Uhrzeitgarantie";
+          acceptedWithoutTimeCount++;
+          break;
+        case 'declined':
+          statusText = "❌ Abgesagt";
+          declinedCount++;
+          break;
+        case 'otherTime':
+          statusText = `🕒 Andere Uhrzeit: ${participant.alternativeTime}`;
+          otherTimeCount++;
+          break;
+        default:
+          statusText = "⏳ Warte auf Antwort";
+          pendingCount++;
+      }
+      
+      participantsText += `<@${participant.userId}>: ${statusText}\n`;
+    }
     
     // Teilnehmeranzahl für die Überschrift
     const totalParticipants = event.participants.length;
     
     // Zusammenfassung der Status-Zahlen
-    const statusSummary = `| ✅ ${acceptedCount} | ❌ ${declinedCount} | ⏱️ ${acceptedWithoutTimeCount} | 🕒 ${otherTimeCount} | ⏳ ${pendingCount} | `;
+    const statusSummary = `| ✅ ${acceptedCount} | ☑️ ${acceptedWithReservationCount} | ❌ ${declinedCount} | ⏱️ ${acceptedWithoutTimeCount} | 🕒 ${otherTimeCount} | ⏳ ${pendingCount} |`;
     
     if (participantsText === "") {
       participantsText = "Keine Teilnehmer eingeladen.";
@@ -326,7 +338,7 @@ for (const participant of event.participants) {
       .setColor('#0099ff')
       .setTitle(`Terminplanung: ${event.title}`)
       .setDescription(description)
-      .addFields({ name: `Teilnehmer (${totalParticipants})`, value: participantsText }) // Aktualisierte Zeile
+      .addFields({ name: `Teilnehmer (${totalParticipants})`, value: participantsText })
       .setTimestamp()
       .setFooter({ text: `Event ID: ${event.id} • Status: ${statusText}` });
     
@@ -354,7 +366,7 @@ for (const participant of event.participants) {
       );
     }
     
-    // Teilnehmer-Buttons aktualisieren (zweite Reihe)
+    // Teilnehmer-Buttons aktualisieren (zweite Reihe - alle 5 Buttons)
     const updatedResponseButtons = new ActionRowBuilder<ButtonBuilder>();
     
     if (event.status === 'active') {
@@ -362,6 +374,10 @@ for (const participant of event.participants) {
         new ButtonBuilder()
           .setCustomId(`respond:${eventId}:accept`)
           .setLabel('Zusagen')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`respond:${eventId}:acceptWithReservation`)
+          .setLabel('Zusagen mit Vorbehalt')
           .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
           .setCustomId(`respond:${eventId}:acceptNoTime`)
@@ -378,9 +394,13 @@ for (const participant of event.participants) {
       );
     }
     
+    const components = event.status === 'active' 
+      ? [updatedAdminButtons, updatedResponseButtons] 
+      : [];
+    
     await message.edit({
       embeds: [updatedEmbed],
-      components: event.status === 'active' ? [updatedAdminButtons, updatedResponseButtons] : []
+      components: components
     });
   } catch (error) {
     console.error(`Fehler beim Aktualisieren der Event-Nachricht:`, error);
@@ -451,12 +471,16 @@ export async function sendReminders(interaction: ButtonInteraction, eventId: str
       .setTimestamp()
       .setFooter({ text: `Event ID: ${eventId}` });
     
-    // Buttons für Erinnerung
+    // Buttons für Erinnerung (eine Reihe mit allen 5 Buttons)
     const reminderRow = new ActionRowBuilder<ButtonBuilder>()
       .addComponents(
         new ButtonBuilder()
           .setCustomId(`respond:${eventId}:accept`)
           .setLabel('Zusagen')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`respond:${eventId}:acceptWithReservation`)
+          .setLabel('Zusagen mit Vorbehalt')
           .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
           .setCustomId(`respond:${eventId}:acceptNoTime`)
@@ -498,14 +522,12 @@ export async function sendReminders(interaction: ButtonInteraction, eventId: str
     console.error('KRITISCHER FEHLER BEI ERINNERUNG:', mainError);
     
     try {
-      // Wenn noch keine Antwort gesendet wurde, jetzt antworten
       if (!interaction.replied) {
         await interaction.reply({ 
           content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.", 
           ephemeral: true 
         });
       } else {
-        // Wenn bereits geantwortet wurde, ein Follow-up senden
         await interaction.followUp({ 
           content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.", 
           ephemeral: true 
@@ -549,6 +571,7 @@ export async function sendStartReminder(interaction: ButtonInteraction, eventId:
     const eligibleParticipants = event.participants.filter(p => 
       p.status === 'accepted' || 
       p.status === 'acceptedWithoutTime' || 
+      p.status === 'acceptedWithReservation' ||
       p.status === 'otherTime'
     );
     
@@ -573,8 +596,6 @@ export async function sendStartReminder(interaction: ButtonInteraction, eventId:
       .setTimestamp()
       .setFooter({ text: `Event ID: ${eventId}` });
 
-
-    
     // Sende Starterinnerungen
     for (const participant of eligibleParticipants) {
       try {
@@ -609,14 +630,12 @@ export async function sendStartReminder(interaction: ButtonInteraction, eventId:
     console.error('KRITISCHER FEHLER BEI STARTERINNERUNG:', mainError);
     
     try {
-      // Wenn noch keine Antwort gesendet wurde, jetzt antworten
       if (!interaction.replied) {
         await interaction.reply({ 
           content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.", 
           ephemeral: true 
         });
       } else {
-        // Wenn bereits geantwortet wurde, ein Follow-up senden
         await interaction.followUp({ 
           content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.", 
           ephemeral: true 
@@ -628,7 +647,7 @@ export async function sendStartReminder(interaction: ButtonInteraction, eventId:
   }
 }
 
-// Modal für alternative Uhrzeit anzeigen (REDESIGNED)
+// Modal für alternative Uhrzeit anzeigen
 export async function showAlternativeTimeModal(interaction: ButtonInteraction, eventId: string): Promise<void> {
   const modal = new ModalBuilder()
     .setCustomId(`alternativeTime:${eventId}`)
@@ -660,7 +679,7 @@ export async function showAlternativeTimeModal(interaction: ButtonInteraction, e
   await interaction.showModal(modal);
 }
 
-// Alternative Uhrzeit-Antwort verarbeiten (REDESIGNED)
+// Alternative Uhrzeit-Antwort verarbeiten
 export async function handleAlternativeTime(
   interaction: ModalSubmitInteraction, 
   eventId: string
@@ -787,6 +806,10 @@ export async function handleResponse(interaction: ButtonInteraction, eventId: st
     case 'accept':
       event.participants[participantIndex].status = 'accepted';
       responseMessage = `Danke für deine Zusage für "${event.title}" am ${event.date} um ${event.time} Uhr!`;
+      break;
+    case 'acceptWithReservation':
+      event.participants[participantIndex].status = 'acceptedWithReservation';
+      responseMessage = `Danke für deine Zusage mit Vorbehalt für "${event.title}" am ${event.date} um ${event.time} Uhr!`;
       break;
     case 'acceptNoTime':
       event.participants[participantIndex].status = 'acceptedWithoutTime';

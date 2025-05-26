@@ -257,35 +257,36 @@ export async function updateEventMessage(eventId: string): Promise<void> {
     let pendingCount = 0;
     let otherTimeCount = 0;
     
-    // Status-Text für jeden Teilnehmer
-    let participantsText = "";
-    for (const participant of event.participants) {
-      let statusText: string;
-      
-      switch (participant.status) {
-        case 'accepted':
-          statusText = "✅ Zugesagt";
-          acceptedCount++;
-          break;
-        case 'acceptedWithoutTime':
-          statusText = "⏱️ Zugesagt ohne Uhrzeitgarantie";
-          acceptedWithoutTimeCount++;
-          break;
-        case 'declined':
-          statusText = "❌ Abgesagt";
-          declinedCount++;
-          break;
-        case 'otherTime':
-          statusText = `🕒 Andere Uhrzeit: ${participant.alternativeTime}`;
-          otherTimeCount++;
-          break;
-        default:
-          statusText = "⏳ Warte auf Antwort";
-          pendingCount++;
-      }
-      
-      participantsText += `<@${participant.userId}>: ${statusText}\n`;
-    }
+// Status-Text für jeden Teilnehmer (UPDATED)
+let participantsText = "";
+for (const participant of event.participants) {
+  let statusText: string;
+  
+  switch (participant.status) {
+    case 'accepted':
+      statusText = "✅ Zugesagt";
+      acceptedCount++;
+      break;
+    case 'acceptedWithoutTime':
+      statusText = "⏱️ Zugesagt ohne Uhrzeitgarantie";
+      acceptedWithoutTimeCount++;
+      break;
+    case 'declined':
+      statusText = "❌ Abgesagt";
+      declinedCount++;
+      break;
+    case 'otherTime':
+      // GEÄNDERT: Neue Formatierung mit 🕒 Symbol
+      statusText = `🕒 Andere Uhrzeit: ${participant.alternativeTime}`;
+      otherTimeCount++;
+      break;
+    default:
+      statusText = "⏳ Warte auf Antwort";
+      pendingCount++;
+  }
+  
+  participantsText += `<@${participant.userId}>: ${statusText}\n`;
+}
     
     // Teilnehmeranzahl für die Überschrift
     const totalParticipants = event.participants.length;
@@ -627,27 +628,39 @@ export async function sendStartReminder(interaction: ButtonInteraction, eventId:
   }
 }
 
-// Modal für alternative Uhrzeit anzeigen
+// Modal für alternative Uhrzeit anzeigen (REDESIGNED)
 export async function showAlternativeTimeModal(interaction: ButtonInteraction, eventId: string): Promise<void> {
   const modal = new ModalBuilder()
     .setCustomId(`alternativeTime:${eventId}`)
     .setTitle('Alternative Uhrzeit angeben');
   
-  const timeInput = new TextInputBuilder()
-    .setCustomId('alternativeTimeInput')
-    .setLabel('Zu welcher Uhrzeit könntest du teilnehmen?')
-    .setPlaceholder('z.B. 18:00 oder 19:30-21:00')
+  const hourInput = new TextInputBuilder()
+    .setCustomId('hourInput')
+    .setLabel('Stunde (00-23)')
+    .setPlaceholder('14')
     .setStyle(TextInputStyle.Short)
+    .setMinLength(1)
+    .setMaxLength(2)
     .setRequired(true);
   
-  const firstActionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(timeInput);
+  const minuteInput = new TextInputBuilder()
+    .setCustomId('minuteInput')
+    .setLabel('Minute (00-59)')
+    .setPlaceholder('30')
+    .setStyle(TextInputStyle.Short)
+    .setMinLength(1)
+    .setMaxLength(2)
+    .setRequired(true);
   
-  modal.addComponents(firstActionRow);
+  const firstActionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(hourInput);
+  const secondActionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(minuteInput);
+  
+  modal.addComponents(firstActionRow, secondActionRow);
   
   await interaction.showModal(modal);
 }
 
-// Alternative Uhrzeit-Antwort verarbeiten
+// Alternative Uhrzeit-Antwort verarbeiten (REDESIGNED)
 export async function handleAlternativeTime(
   interaction: ModalSubmitInteraction, 
   eventId: string
@@ -679,17 +692,56 @@ export async function handleAlternativeTime(
     return;
   }
   
-  const alternativeTime = interaction.fields.getTextInputValue('alternativeTimeInput');
+  // Stunde und Minute aus den Eingabefeldern holen
+  const hourInput = interaction.fields.getTextInputValue('hourInput');
+  const minuteInput = interaction.fields.getTextInputValue('minuteInput');
+  
+  // Validierung: Nur Zahlen erlaubt
+  if (!/^\d+$/.test(hourInput) || !/^\d+$/.test(minuteInput)) {
+    await interaction.reply({ 
+      content: "Bitte gib nur Zahlen für Stunde und Minute ein.", 
+      ephemeral: true 
+    });
+    return;
+  }
+  
+  // In Zahlen umwandeln
+  const hour = parseInt(hourInput);
+  const minute = parseInt(minuteInput);
+  
+  // Validierung der Werte
+  if (hour < 0 || hour > 23) {
+    await interaction.reply({ 
+      content: "Die Stunde muss zwischen 00 und 23 liegen.", 
+      ephemeral: true 
+    });
+    return;
+  }
+  
+  if (minute < 0 || minute > 59) {
+    await interaction.reply({ 
+      content: "Die Minute muss zwischen 00 und 59 liegen.", 
+      ephemeral: true 
+    });
+    return;
+  }
+  
+  // Formatierung: Führende Nullen hinzufügen wenn nötig
+  const formattedHour = hour.toString().padStart(2, '0');
+  const formattedMinute = minute.toString().padStart(2, '0');
+  
+  // Finale Zeit mit "ca." und "Uhr" formatieren
+  const formattedTime = `ca. ${formattedHour}:${formattedMinute} Uhr`;
   
   // Teilnehmerstatus aktualisieren
   event.participants[participantIndex].status = 'otherTime';
-  event.participants[participantIndex].alternativeTime = alternativeTime;
+  event.participants[participantIndex].alternativeTime = formattedTime;
   
   saveEvents(events);
   
   await updateEventMessage(eventId);
   await interaction.reply({ 
-    content: `Danke für deine Antwort! Du hast für "${event.title}" am ${event.date} eine alternative Uhrzeit (${alternativeTime}) angegeben.`, 
+    content: `Danke für deine Antwort! Du hast für "${event.title}" am ${event.date} eine alternative Uhrzeit (${formattedTime}) angegeben.`, 
     ephemeral: true 
   });
 }

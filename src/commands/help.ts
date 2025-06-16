@@ -52,7 +52,7 @@ module.exports = {
             '- Teilnehmer hinzufügen oder entfernen\n' +
             '- Erinnerungen senden (an alle, die noch nicht geantwortet haben)\n' +
             '- Starterinnerungen senden (an alle zugesagten Teilnehmer)\n' +
-            '- Terminsuchen abbrechen\n' +
+            '- Terminsuchen abbrechen (mit optionalem Grund und Benachrichtigungsoption)\n' +
             '- Terminsuchen schließen' 
         },
         { 
@@ -64,6 +64,13 @@ module.exports = {
             '- **Absagen**: Lehnt die Teilnahme ab' 
         },
         {
+          name: 'Abbruch-Feature',
+          value: 'Beim Abbrechen einer Terminsuche öffnet sich ein Eingabefeld mit folgenden Optionen:\n' +
+            '- **Abbruchgrund** (optional): Begründung für den Abbruch (wird im Status angezeigt)\n' +
+            '- **Benachrichtigung**: 0 = keine DMs, 1 = alle zugesagten Teilnehmer werden per DM über den Abbruch informiert\n' +
+            '- Der Abbruchgrund wird sowohl im Server-Footer als auch bei Antwortversuchen angezeigt'
+        },
+        {
           name: 'Besondere Features',
           value: '- Antworten sowohl per DM als auch direkt im Channel möglich\n' +
             '- Rollenunterstützung: Lade ganze Teams mit einem Befehl ein\n' +
@@ -72,7 +79,8 @@ module.exports = {
             '- Separate Erinnerungsfunktion für ausstehende Antworten\n' +
             '- Terminstart-Erinnerung für zugesagte Teilnehmer\n' +
             '- Flexible Zusage-Optionen für verschiedene Teilnahme-Szenarien\n' +
-            '- Automatische Registrierung der Befehle auf allen Servern'
+            '- Automatische Registrierung der Befehle auf allen Servern\n' +
+            '- Intelligente Abbruchbenachrichtigungen mit optionalen Begründungen'
         },
         {
           name: 'Hinweis',

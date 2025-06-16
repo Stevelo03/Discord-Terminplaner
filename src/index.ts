@@ -82,7 +82,7 @@ client.on(Events.InteractionCreate, async interaction => {
       }
       
       if (option === 'cancel') {
-        terminManager.cancelEvent(interaction, eventId);
+        terminManager.showCancelModal(interaction, eventId);
       } else if (option === 'close') {
         terminManager.closeEvent(interaction, eventId);
       } else if (option === 'remind') {
@@ -98,6 +98,9 @@ client.on(Events.InteractionCreate, async interaction => {
     if (action === 'alternativeTime') {
       const terminManager = require('./terminManager');
       terminManager.handleAlternativeTime(interaction, eventId);
+    } else if (action === 'cancelEvent') {
+      const terminManager = require('./terminManager');
+      terminManager.handleCancelEvent(interaction, eventId);
     }
   }
 });

@@ -304,7 +304,7 @@ export async function updateEventMessage(eventId: string): Promise<void> {
     const totalParticipants = event.participants.length;
     
     // Zusammenfassung der Status-Zahlen
-    const statusSummary = `| ✅ ${acceptedCount} | ☑️ ${acceptedWithReservationCount} | ❌ ${declinedCount} | ⏱️ ${acceptedWithoutTimeCount} | 🕒 ${otherTimeCount} | ⏳ ${pendingCount} |`;
+    const statusSummary = `| ✅ ${acceptedCount} | ☑️ ${acceptedWithReservationCount} | ⏱️ ${acceptedWithoutTimeCount} | 🕒 ${otherTimeCount} | ❌ ${declinedCount} | ⏳ ${pendingCount} |`;
     
     if (participantsText === "") {
       participantsText = "Keine Teilnehmer eingeladen.";
@@ -313,12 +313,17 @@ export async function updateEventMessage(eventId: string): Promise<void> {
       participantsText += `\n${statusSummary}`;
     }
     
-    // Status als Text
-    const statusText = event.status === 'active' 
+    // Status als Text mit Abbruchgrund
+    let statusText = event.status === 'active' 
       ? 'Aktiv' 
       : event.status === 'closed' 
         ? 'Geschlossen' 
         : 'Abgebrochen';
+    
+    // Abbruchgrund hinzufügen, falls vorhanden
+    if (event.status === 'cancelled' && event.cancellationReason) {
+      statusText += ` (${event.cancellationReason})`;
+    }
     
     // Beschreibung mit optionalem relativem Datum und Kommentar
     let description = `Termin für ${event.date} um ${event.time} Uhr.`;
@@ -333,9 +338,23 @@ export async function updateEventMessage(eventId: string): Promise<void> {
     
     description += `\n\nStatus der Teilnehmer:`;
     
+    // Farbe basierend auf Event-Status bestimmen
+    let embedColor = '#0099ff'; // Standard blau für aktive Events
+    switch (event.status) {
+      case 'active':
+        embedColor = '#0099ff'; // Blau
+        break;
+      case 'closed':
+        embedColor = '#00ff00'; // Grün
+        break;
+      case 'cancelled':
+        embedColor = '#ff0000'; // Rot
+        break;
+    }
+    
     // Embed für Server-Channel aktualisieren
     const updatedEmbed = new EmbedBuilder()
-      .setColor('#0099ff')
+      .setColor(embedColor as any)
       .setTitle(`Terminplanung: ${event.title}`)
       .setDescription(description)
       .addFields({ name: `Teilnehmer (${totalParticipants})`, value: participantsText })
@@ -404,6 +423,156 @@ export async function updateEventMessage(eventId: string): Promise<void> {
     });
   } catch (error) {
     console.error(`Fehler beim Aktualisieren der Event-Nachricht:`, error);
+  }
+}
+
+// Modal für Abbruchgrund anzeigen
+export async function showCancelModal(interaction: ButtonInteraction, eventId: string): Promise<void> {
+  const modal = new ModalBuilder()
+    .setCustomId(`cancelEvent:${eventId}`)
+    .setTitle('Terminsuche abbrechen');
+  
+  const reasonInput = new TextInputBuilder()
+    .setCustomId('reasonInput')
+    .setLabel('Abbruchgrund (optional)')
+    .setPlaceholder('z.B. "Organisator erkrankt" oder leer lassen...')
+    .setStyle(TextInputStyle.Paragraph)
+    .setMinLength(0)
+    .setMaxLength(200)
+    .setRequired(false);
+  
+  const notifyInput = new TextInputBuilder()
+    .setCustomId('notifyInput')
+    .setLabel('Benachrichtigung? (0 = Nein, 1 = Ja)')
+    .setPlaceholder('0 oder 1')
+    .setStyle(TextInputStyle.Short)
+    .setMinLength(1)
+    .setMaxLength(1)
+    .setRequired(true);
+  
+  const firstActionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(reasonInput);
+  const secondActionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(notifyInput);
+  
+  modal.addComponents(firstActionRow, secondActionRow);
+  
+  await interaction.showModal(modal);
+}
+
+// Abbruch-Modal verarbeiten
+export async function handleCancelEvent(
+  interaction: ModalSubmitInteraction, 
+  eventId: string
+): Promise<void> {
+  try {
+    await interaction.deferReply({ ephemeral: true });
+    
+    const events = loadEvents();
+    const eventIndex = events.findIndex(e => e.id === eventId);
+    
+    if (eventIndex === -1) {
+      await interaction.editReply({ content: "Dieses Event existiert nicht mehr." });
+      return;
+    }
+    
+    const event = events[eventIndex];
+    
+    // Abbruchgrund und Benachrichtigungsoption aus den Eingabefeldern holen
+    const reasonInput = interaction.fields.getTextInputValue('reasonInput').trim();
+    const notifyInput = interaction.fields.getTextInputValue('notifyInput').trim();
+    
+    // Validierung der Benachrichtigungsoption
+    if (notifyInput !== '0' && notifyInput !== '1') {
+      await interaction.editReply({ 
+        content: "Bitte gib nur '0' (keine Benachrichtigung) oder '1' (Benachrichtigung senden) ein." 
+      });
+      return;
+    }
+    
+    const shouldNotify = notifyInput === '1';
+    
+    // Event als abgebrochen markieren
+    events[eventIndex].status = 'cancelled';
+    
+    // Abbruchgrund speichern, falls angegeben
+    if (reasonInput) {
+      events[eventIndex].cancellationReason = reasonInput;
+    }
+    
+    saveEvents(events);
+    
+    // Benachrichtigungen senden, falls gewünscht
+    let notificationCount = 0;
+    let notificationErrors = 0;
+    
+    if (shouldNotify) {
+      // Teilnehmer mit Zusagen finden
+      const participantsToNotify = event.participants.filter(p => 
+        p.status === 'accepted' || 
+        p.status === 'acceptedWithoutTime' || 
+        p.status === 'acceptedWithReservation' ||
+        p.status === 'otherTime'
+      );
+      
+      if (participantsToNotify.length > 0) {
+        // Abbruch-Nachricht erstellen
+        let cancellationMessage = `Der Termin "${event.title}" am ${event.date} um ${event.time} Uhr wurde abgebrochen.`;
+        
+        if (reasonInput) {
+          cancellationMessage += `\n\n**Grund:** ${reasonInput}`;
+        }
+        
+        const cancellationEmbed = new EmbedBuilder()
+          .setColor('#FF0000') // Rot für Abbruch
+          .setTitle(`❌ Termin abgebrochen: ${event.title}`)
+          .setDescription(cancellationMessage)
+          .setTimestamp()
+          .setFooter({ text: `Event ID: ${eventId}` });
+        
+        // Benachrichtigungen senden
+        for (const participant of participantsToNotify) {
+          try {
+            const user = await interaction.client.users.fetch(participant.userId);
+            await user.send({ embeds: [cancellationEmbed] });
+            notificationCount++;
+          } catch (error) {
+            console.error(`Konnte keine Abbruchbenachrichtigung an ${participant.username} senden:`, error);
+            notificationErrors++;
+          }
+        }
+      }
+    }
+    
+    // Server-Channel-Nachricht aktualisieren
+    await updateEventMessage(eventId);
+    
+    // Rückmeldung an den Admin
+    let responseMessage = `Die Terminsuche "${event.title}" wurde erfolgreich abgebrochen.`;
+    
+    if (reasonInput) {
+      responseMessage += `\n**Grund:** ${reasonInput}`;
+    }
+    
+    if (shouldNotify) {
+      responseMessage += `\n\n📧 **Benachrichtigungen:**`;
+      responseMessage += `\n✅ ${notificationCount} Teilnehmer benachrichtigt`;
+      if (notificationErrors > 0) {
+        responseMessage += `\n❌ ${notificationErrors} Benachrichtigungen fehlgeschlagen`;
+      }
+    }
+    
+    await interaction.editReply({ content: responseMessage });
+  } catch (error) {
+    console.error('Fehler beim Abbrechen des Events:', error);
+    
+    try {
+      if (interaction.deferred) {
+        await interaction.editReply({ content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut." });
+      } else {
+        await interaction.reply({ content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.", ephemeral: true });
+      }
+    } catch (e) {
+      console.error("Fehler bei der Fehlermeldung:", e);
+    }
   }
 }
 
@@ -779,8 +948,15 @@ export async function handleResponse(interaction: ButtonInteraction, eventId: st
   
   // Prüfen, ob das Event noch aktiv ist
   if (event.status !== 'active') {
+    let statusMessage = `Diese Terminsuche wurde ${event.status === 'closed' ? 'geschlossen' : 'abgebrochen'}.`;
+    
+    // Abbruchgrund hinzufügen, falls vorhanden
+    if (event.status === 'cancelled' && event.cancellationReason) {
+      statusMessage += `\n\n**Grund:** ${event.cancellationReason}`;
+    }
+    
     await interaction.reply({ 
-      content: `Diese Terminsuche wurde ${event.status === 'closed' ? 'geschlossen' : 'abgebrochen'}.`, 
+      content: statusMessage, 
       ephemeral: true 
     });
     return;
@@ -827,24 +1003,6 @@ export async function handleResponse(interaction: ButtonInteraction, eventId: st
   await interaction.reply({ content: responseMessage, ephemeral: true });
 }
 
-// Event abbrechen
-export async function cancelEvent(interaction: ButtonInteraction, eventId: string): Promise<void> {
-  const events = loadEvents();
-  const eventIndex = events.findIndex(e => e.id === eventId);
-  
-  if (eventIndex === -1) {
-    await interaction.reply({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
-    return;
-  }
-  
-  events[eventIndex].status = 'cancelled';
-  saveEvents(events);
-  
-  // Server-Channel-Nachricht aktualisieren
-  await updateEventMessage(eventId);
-  await interaction.reply({ content: "Die Terminsuche wurde abgebrochen.", ephemeral: true });
-}
-
 // Event schließen
 export async function closeEvent(interaction: ButtonInteraction, eventId: string): Promise<void> {
   const events = loadEvents();
@@ -871,7 +1029,8 @@ export default {
   handleAlternativeTime,
   sendReminders,
   sendStartReminder,
-  cancelEvent,
+  showCancelModal,
+  handleCancelEvent,
   closeEvent,
   loadEvents,
   saveEvents

@@ -30,4 +30,5 @@ export interface Event {
   channelId: string;
   messageId: string;
   status: 'active' | 'closed' | 'cancelled';
+  cancellationReason?: string;  // Neues Feld für Abbruchgrund
 }

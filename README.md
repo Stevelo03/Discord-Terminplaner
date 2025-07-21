@@ -1,6 +1,6 @@
 # Terminplanungsbot 📅
 
-Ein leistungsstarker Discord-Bot zur effizienten Terminplanung auf Discord-Servern. Oder so. 
+Ein leistungsstarker Discord-Bot zur effizienten Terminplanung auf Discord-Servern. 
 Eigentlich habe ich diesen Bot entwickelt weil ich in meinem Freundeskreis das Problem hatte das Terminabsprachen immer erst auf den letzten Drücker entstanden, und keiner genau wusste wer denn jetzt wann kommt.
 
 ## Features ✨
@@ -27,6 +27,16 @@ Eigentlich habe ich diesen Bot entwickelt weil ich in meinem Freundeskreis das P
   - Spezielle Starterinnerung kurz vor Terminbeginn an alle zugesagten Teilnehmer
 - **Multi-Server Support**: Funktioniert auf beliebig vielen Discord-Servern gleichzeitig
 - **Automatische Befehlsregistrierung**: Registriert sich automatisch auf neuen Servern
+
+### Neue Database-Features
+- **SQLite-Datenbank**: Lokale SQLite-Database mit Drizzle ORM für bessere Performance und Zuverlässigkeit
+- **Audit-Historie**: Vollständige Verfolgung aller Aktionen und Änderungen
+- **Multi-Server-Isolation**: Daten werden pro Server getrennt gespeichert
+- **Response-Analytics**: Detaillierte Timeline aller Teilnehmer-Antworten mit Zeitstempel
+- **Live-Progress-Updates**: Echtzeit-Feedback während Event-Erstellung und Teilnehmereinladung
+- **Intelligente Validierung**: Automatische Input-Validierung und Bot-Filterung
+- **Duplikat-Erkennung**: Verhindert doppelte Einladungen automatisch
+- **Batch-Processing**: Optimierte Performance bei großen Teilnehmergruppen
 
 ### Visuelle Kennzeichnung
 - **🔵 Blaue Embeds**: Aktive Terminsuchen
@@ -139,21 +149,36 @@ Beim Klick auf "Terminsuche abbrechen" öffnet sich ein Modal mit zwei Optionen:
 
 ## Technische Details 💻
 
+### Architektur
 - Entwickelt in TypeScript
 - Basiert auf discord.js v14
+- SQLite-Datenbank mit Drizzle ORM
 - Lokale Datenspeicherung (keine externe Datenbank benötigt)
 - Automatische Error-Behandlung
 - Ephemeral Nachrichten für saubere Channelinteraktion
+
+### Database-Features
+- **Schema**: Servers, ServerUsers, Events, Participants, ResponseHistory, EventAuditLogs
+- **Relations**: Foreign Keys und optimierte Indizes
+- **Performance**: Batch-Processing und effiziente Queries
+- **Audit Trail**: Vollständige Historie aller Aktionen
+- **Server Isolation**: Multi-Server-Support mit Daten-Trennung
+
+### User Experience
 - Dynamische Embed-Farbgebung basierend auf Event-Status
 - Robuste Modal-Verarbeitung mit Eingabevalidierung
+- Live-Progress-Updates während Event-Erstellung
+- Detaillierte Erfolgs- und Fehlerstatistiken
+- Automatische Bot-Filterung und Duplikat-Erkennung
 
 ## Datensicherheit 🔒
 
-- Alle Daten werden lokal gespeichert
+- Alle Daten werden lokal in SQLite-Database gespeichert
 - Keine Weitergabe an Dritte
 - Alle Kommunikation erfolgt über die offizielle Discord API
-- Abbruchgründe werden nur intern gespeichert und sind nur für Teilnehmer des jeweiligen Events sichtbar
-
+- Vollständige Audit-Historie für Compliance
+- Server-isolierte Datenspeicherung
+- Automatische Backups durch SQLite WAL-Modus
 
 ## Lizenz 📜
 

@@ -1,23 +1,70 @@
 {
   "name": "discord-terminplanungsbot",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Ein Discord Bot für Terminplanung",
   "main": "dist/index.js",
   "scripts": {
     "start": "node dist/index.js",
     "build": "tsc",
     "dev": "ts-node src/index.ts",
-    "watch": "tsc -w"
+    "watch": "tsc -w",
+    "clean": "rimraf dist",
+    "prebuild": "npm run clean",
+    
+    "db:generate": "drizzle-kit generate:sqlite",
+    "db:push": "drizzle-kit push:sqlite",
+    "db:studio": "drizzle-kit studio",
+    "test:db": "npx ts-node src/test-drizzle.ts",
+    
+    "deploy": "ts-node src/deploy-commands.ts",
+    "deploy:dev": "ts-node src/deploy-commands.ts dev",
+    "deploy:refresh": "ts-node src/deploy-commands.ts refresh",
+    "deploy:list": "ts-node src/deploy-commands.ts list",
+    "deploy:delete": "ts-node src/deploy-commands.ts delete",
+    
+    "type-check": "tsc --noEmit",
+    "postinstall": "npm run db:generate"
+
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "typescript",
+    "terminplanung",
+    "sqlite",
+    "drizzle",
+    "analytics"
+  ],
+  "author": "Stevelo03",
+  "license": "AGPL-3.0",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
   },
   "dependencies": {
     "discord.js": "^14.18.0",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.29.3",
+    "better-sqlite3": "^9.2.2"
   },
   "devDependencies": {
-    "@types/node": "^20.10.0",
-    "ts-node": "^10.9.1",
-    "typescript": "^5.3.2"
+    "@types/node": "^20.17.30",
+    "@types/better-sqlite3": "^7.6.8",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3",
+    "drizzle-kit": "^0.20.9",
+    "rimraf": "^5.0.5"
   },
-  "author": "",
-  "license": "ISC"
+  "optionalDependencies": {
+    "canvas": "^2.11.2",
+    "chart.js": "^3.9.1",
+    "chartjs-node-canvas": "^4.1.6"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Stevelo03/Discord-Terminplaner.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Stevelo03/Discord-Terminplaner/issues"
+  }
 }

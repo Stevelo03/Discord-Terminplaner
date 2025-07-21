@@ -1,3 +1,4 @@
+// src/commands/help.ts
 import { SlashCommandBuilder } from 'discord.js';
 import { CommandInteraction, EmbedBuilder } from 'discord.js';
 
@@ -80,16 +81,23 @@ module.exports = {
             '- Terminstart-Erinnerung für zugesagte Teilnehmer\n' +
             '- Flexible Zusage-Optionen für verschiedene Teilnahme-Szenarien\n' +
             '- Automatische Registrierung der Befehle auf allen Servern\n' +
-            '- Intelligente Abbruchbenachrichtigungen mit optionalen Begründungen'
+            '- Intelligente Abbruchbenachrichtigungen mit optionalen Begründungen\n' +
+            '- Detaillierte Erfolgs- und Fehlerstatistiken bei Event-Erstellung\n' +
+            '- Live-Progress-Updates bei der Teilnehmereinladung\n' +
+            '- Automatische Bot-Filterung und Duplikat-Erkennung'
         },
         {
-          name: 'Hinweis',
-          value: 'Der Bot speichert alle Daten lokal und benötigt keine externe Datenbank.\n' +
-            'Alle Teilnehmerdaten werden sicher und privat behandelt.'
+          name: 'Datenbank & Sicherheit',
+          value: 'Der Bot nutzt jetzt eine SQLite-Datenbank für bessere Performance und Zuverlässigkeit:\n' +
+            '- Alle Daten werden lokal und sicher gespeichert\n' +
+            '- Vollständige Audit-Historie aller Aktionen\n' +
+            '- Multi-Server-Unterstützung mit Daten-Isolation\n' +
+            '- Automatische Backups und Fehlerwiederherstellung\n' +
+            '- Keine externe Datenbank erforderlich'
         }
       )
       .setTimestamp()
-      .setFooter({ text: 'Terminplanungsbot - Entwickelt für effiziente Terminplanung' });
+      .setFooter({ text: 'Terminplanungsbot - Jetzt mit SQLite-Database für bessere Performance' });
     
     await interaction.reply({ embeds: [helpEmbed], ephemeral: true });
   },

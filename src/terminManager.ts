@@ -1,39 +1,176 @@
-import { ButtonInteraction, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, User, TextChannel, ModalBuilder, TextInputBuilder, TextInputStyle, ModalSubmitInteraction } from 'discord.js';
-import fs from 'fs';
-import path from 'path';
-import { Event, Participant } from './types';
+// src/terminManager.ts
+import { 
+  ButtonInteraction, 
+  EmbedBuilder, 
+  ActionRowBuilder, 
+  ButtonBuilder, 
+  ButtonStyle, 
+  User, 
+  TextChannel, 
+  ModalBuilder, 
+  TextInputBuilder, 
+  TextInputStyle, 
+  ModalSubmitInteraction 
+} from 'discord.js';
+import { db } from './db';
+import { 
+  servers, 
+  serverUsers, 
+  events, 
+  participants, 
+  responseHistory, 
+  eventAuditLogs 
+} from './db/schema';
+import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 
-
-const dataFolder = path.join(__dirname, '..', 'data');
-const eventsFile = path.join(dataFolder, 'events.json');
-
-// Sicherstellen, dass der Datenordner existiert
-if (!fs.existsSync(dataFolder)) {
-  fs.mkdirSync(dataFolder, { recursive: true });
-}
-
-// Sicherstellen, dass die Events-Datei existiert
-if (!fs.existsSync(eventsFile)) {
-  fs.writeFileSync(eventsFile, JSON.stringify([], null, 2));
-}
-
-// Events aus Datei laden
-function loadEvents(): Event[] {
+// Ensure server exists in database
+async function ensureServer(serverId: string, serverName: string): Promise<void> {
   try {
-    const data = fs.readFileSync(eventsFile, 'utf8');
-    return JSON.parse(data);
+    const existingServer = await db.select().from(servers).where(eq(servers.id, serverId)).limit(1);
+    
+    if (existingServer.length === 0) {
+      await db.insert(servers).values({
+        id: serverId,
+        name: serverName,
+        createdAt: new Date(),
+        lastActivityAt: new Date()
+      });
+      console.log(`✅ Created server: ${serverName}`);
+    } else {
+      await db.update(servers)
+        .set({ 
+          name: serverName, // Update name in case it changed
+          lastActivityAt: new Date() 
+        })
+        .where(eq(servers.id, serverId));
+    }
   } catch (error) {
-    console.error('Fehler beim Laden der Events:', error);
-    return [];
+    console.error('Error ensuring server:', error);
+    throw error;
   }
 }
 
-// Events in Datei speichern
-function saveEvents(events: Event[]): void {
+// Ensure server user exists in database
+async function ensureServerUser(serverId: string, userId: string, username: string, displayName?: string): Promise<number> {
   try {
-    fs.writeFileSync(eventsFile, JSON.stringify(events, null, 2));
+    const existingUser = await db.select()
+      .from(serverUsers)
+      .where(and(eq(serverUsers.serverId, serverId), eq(serverUsers.userId, userId)))
+      .limit(1);
+    
+    if (existingUser.length === 0) {
+      const [newUser] = await db.insert(serverUsers).values({
+        serverId: serverId,
+        userId: userId,
+        username: username,
+        displayName: displayName,
+        totalInvites: 0,
+        totalResponses: 0,
+        firstSeenAt: new Date(),
+        lastActiveAt: new Date()
+      }).returning();
+      
+      console.log(`✅ Created server user: ${username}`);
+      return newUser.id;
+    } else {
+      await db.update(serverUsers)
+        .set({ 
+          username: username,
+          displayName: displayName,
+          lastActiveAt: new Date() 
+        })
+        .where(eq(serverUsers.id, existingUser[0].id));
+      
+      return existingUser[0].id;
+    }
   } catch (error) {
-    console.error('Fehler beim Speichern der Events:', error);
+    console.error('Error ensuring server user:', error);
+    throw error;
+  }
+}
+
+// Create audit log entry
+async function createAuditLog(eventId: string, action: string, performedBy: string, details?: any): Promise<void> {
+  try {
+    await db.insert(eventAuditLogs).values({
+      eventId: eventId,
+      action: action as any,
+      performedBy: performedBy,
+      performedAt: new Date(),
+      details: details ? JSON.stringify(details) : null
+    });
+  } catch (error) {
+    console.error('Error creating audit log:', error);
+  }
+}
+
+// Create response history entry
+async function createResponseHistory(
+  participantId: number, 
+  oldStatus: string | null, 
+  newStatus: string, 
+  responseTimeSeconds?: number, 
+  alternativeTime?: string,
+  responseContext: 'INITIAL' | 'AFTER_REMINDER' | 'AFTER_START_REMINDER' | 'LAST_MINUTE' = 'INITIAL',
+  hoursBeforeEvent?: number
+): Promise<void> {
+  try {
+    await db.insert(responseHistory).values({
+      participantId: participantId,
+      oldStatus: oldStatus as any,
+      newStatus: newStatus as any,
+      changedAt: new Date(),
+      responseTimeSeconds: responseTimeSeconds,
+      alternativeTime: alternativeTime,
+      responseContext: responseContext,
+      hoursBeforeEvent: hoursBeforeEvent
+    });
+  } catch (error) {
+    console.error('Error creating response history:', error);
+  }
+}
+
+// Calculate hours before event
+function calculateHoursBeforeEvent(eventDate: string, eventTime: string): number {
+  try {
+    // Parse event date and time
+    const [day, month, year] = eventDate.split('.');
+    const [hours, minutes] = eventTime.split(':');
+    
+    const eventDateTime = new Date(
+      parseInt(year), 
+      parseInt(month) - 1, 
+      parseInt(day), 
+      parseInt(hours), 
+      parseInt(minutes)
+    );
+    
+    const now = new Date();
+    const diffMs = eventDateTime.getTime() - now.getTime();
+    const hoursBeforeEvent = diffMs / (1000 * 60 * 60);
+    
+    return Math.max(0, hoursBeforeEvent);
+  } catch (error) {
+    console.error('Error calculating hours before event:', error);
+    return 0;
+  }
+}
+
+// Get server user ID helper
+async function getServerUserId(serverId: string, userId: string): Promise<number | null> {
+  try {
+    const serverUser = await db.select({ id: serverUsers.id })
+      .from(serverUsers)
+      .where(and(
+        eq(serverUsers.serverId, serverId),
+        eq(serverUsers.userId, userId)
+      ))
+      .limit(1);
+    
+    return serverUser.length > 0 ? serverUser[0].id : null;
+  } catch (error) {
+    console.error('Error getting server user ID:', error);
+    return null;
   }
 }
 
@@ -43,329 +180,45 @@ export async function createEvent(
   date: string,
   time: string,
   organizerId: string,
-  participants: string[],
+  participantUserIds: string[],
   channel: TextChannel,
   relativeDate?: string | null,
   comment?: string | null
 ): Promise<string> {
-  const events = loadEvents();
-  
-  // Neue Event-ID generieren
-  const eventId = Date.now().toString();
-  
-  // Teilnehmer initialisieren
-  const participantsList: Participant[] = [];
-  
-  // Embed für den Server-Channel erstellen
-  const serverEmbed = new EmbedBuilder()
-    .setColor('#0099ff')
-    .setTitle(`Terminplanung: ${title}`)
-    .setDescription(`Termin für ${date} um ${time} Uhr.${relativeDate ? `\nDas ist ${relativeDate}` : ''}${comment ? `\n\n**Kommentar:** ${comment}` : ''}\n`)
-    .setTimestamp()
-    .setFooter({ text: `Event ID: ${eventId} • Status: Aktiv` });
-  
-  // Admin-Buttons (erste Reihe)
-  const adminButtons = new ActionRowBuilder<ButtonBuilder>()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId(`manage:${eventId}:remind`)
-        .setLabel('Erinnerung senden')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`manage:${eventId}:startReminder`)
-        .setLabel('Termin Starterinnerung')
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`manage:${eventId}:cancel`)
-        .setLabel('Terminsuche abbrechen')
-        .setStyle(ButtonStyle.Danger),
-      new ButtonBuilder()
-        .setCustomId(`manage:${eventId}:close`)
-        .setLabel('Terminsuche schließen')
-        .setStyle(ButtonStyle.Primary)
-    );
-  
-  // Teilnehmer-Buttons (zweite Reihe - alle 5 Buttons)
-  const responseButtons = new ActionRowBuilder<ButtonBuilder>()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId(`respond:${eventId}:accept`)
-        .setLabel('Zusagen')
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`respond:${eventId}:acceptWithReservation`)
-        .setLabel('Zusagen mit Vorbehalt')
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`respond:${eventId}:acceptNoTime`)
-        .setLabel('Zusagen ohne Uhrzeitgarantie')
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`respond:${eventId}:otherTime`)
-        .setLabel('Andere Uhrzeit')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`respond:${eventId}:decline`)
-        .setLabel('Absagen')
-        .setStyle(ButtonStyle.Danger)
-    );
-
-  // Nachricht im Server-Channel senden
-  const message = await channel.send({
-    embeds: [serverEmbed],
-    components: [adminButtons, responseButtons]
-  });
-  
-  // Event in der Liste speichern
-  const newEvent: Event = {
-    id: eventId,
-    title,
-    date,
-    time,
-    relativeDate: relativeDate || undefined,
-    comment: comment || undefined,
-    organizer: organizerId,
-    participants: participantsList,
-    channelId: channel.id,
-    messageId: message.id,
-    status: 'active'
-  };
-  
-  events.push(newEvent);
-  saveEvents(events);
-  
-  return eventId;
-}
-
-// DM an Teilnehmer senden
-export async function inviteParticipant(
-  eventId: string,
-  user: User,
-  title: string,
-  date: string,
-  time: string,
-  relativeDate?: string | null,
-  comment?: string | null
-): Promise<boolean> {
-  const events = loadEvents();
-  const eventIndex = events.findIndex(e => e.id === eventId);
-  
-  if (eventIndex === -1) {
-    console.error(`Event mit ID ${eventId} nicht gefunden.`);
-    return false;
-  }
-  
-  // Teilnehmer zur Liste hinzufügen
-  events[eventIndex].participants.push({
-    userId: user.id,
-    username: user.username,
-    status: 'pending',
-    alternativeTime: ''
-  });
-  
-  // Beschreibung mit optionalem relativem Datum und Kommentar
-  let description = `Du wurdest eingeladen am ${date} an ${title} teilzunehmen, um ${time} Uhr.`;
-  
-  if (relativeDate) {
-    description += `\nDas ist ${relativeDate}`;
-  }
-  
-  if (comment) {
-    description += `\n\n**Kommentar:** ${comment}`;
-  }
-  
-  // Embed für DM erstellen
-  const dmEmbed = new EmbedBuilder()
-    .setColor('#0099ff')
-    .setTitle(`Terminsuche: ${title}`)
-    .setDescription(description)
-    .setTimestamp()
-    .setFooter({ text: `Event ID: ${eventId}` });
-  
-  // Buttons für DM (eine Reihe mit allen 5 Buttons)
-  const dmRow = new ActionRowBuilder<ButtonBuilder>()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId(`respond:${eventId}:accept`)
-        .setLabel('Zusagen')
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`respond:${eventId}:acceptWithReservation`)
-        .setLabel('Zusagen mit Vorbehalt')
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`respond:${eventId}:acceptNoTime`)
-        .setLabel('Zusagen ohne Uhrzeitgarantie')
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`respond:${eventId}:otherTime`)
-        .setLabel('Andere Uhrzeit')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`respond:${eventId}:decline`)
-        .setLabel('Absagen')
-        .setStyle(ButtonStyle.Danger)
-    );
-  
   try {
-    // DM an Teilnehmer senden
-    if (events[eventIndex].status === 'active') {
-      await user.send({
-        embeds: [dmEmbed],
-        components: [dmRow]
-      });
-    } else {
-      // Bei geschlossenem oder abgebrochenem Event keine Buttons anzeigen
-      await user.send({
-        embeds: [dmEmbed],
-        components: []
-      });
+    const serverId = channel.guildId;
+    const serverName = channel.guild.name;
+    
+    // Ensure server exists
+    await ensureServer(serverId, serverName);
+    
+    // Generate event ID
+    const eventId = Date.now().toString();
+    
+    // Parse date for queries (optional)
+    let parsedDate: Date | null = null;
+    try {
+      const [day, month, year] = date.split('.');
+      parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    } catch (error) {
+      console.warn('Could not parse date:', date);
     }
     
-    saveEvents(events);
+    // Ensure organizer exists
+    const organizer = await channel.guild.members.fetch(organizerId);
+    await ensureServerUser(serverId, organizerId, organizer.user.username, organizer.displayName);
     
-    // Server-Channel-Nachricht aktualisieren
-    await updateEventMessage(eventId);
-    
-    return true;
-  } catch (error) {
-    console.error(`Konnte keine DM an ${user.username} senden:`, error);
-    // Teilnehmer aus der Liste entfernen
-    events[eventIndex].participants = events[eventIndex].participants.filter(p => p.userId !== user.id);
-    saveEvents(events);
-    return false;
-  }
-}
-
-// Event-Nachricht im Server aktualisieren
-export async function updateEventMessage(eventId: string): Promise<void> {
-  const events = loadEvents();
-  const event = events.find(e => e.id === eventId);
-  
-  if (!event) {
-    console.error(`Event mit ID ${eventId} nicht gefunden.`);
-    return;
-  }
-  
-  const client = (await import('./index')).default.client;
-  const channel = await client.channels.fetch(event.channelId) as TextChannel;
-  
-  if (!channel) {
-    console.error(`Channel für Event ${eventId} nicht gefunden.`);
-    return;
-  }
-  
-  try {
-    const message = await channel.messages.fetch(event.messageId);
-    
-    // Status-Zähler für jeden Teilnehmerstatus
-    let acceptedCount = 0;
-    let declinedCount = 0;
-    let acceptedWithoutTimeCount = 0;
-    let acceptedWithReservationCount = 0;
-    let pendingCount = 0;
-    let otherTimeCount = 0;
-    
-    // Status-Text für jeden Teilnehmer
-    let participantsText = "";
-    for (const participant of event.participants) {
-      let statusText: string;
-      
-      switch (participant.status) {
-        case 'accepted':
-          statusText = "✅ Zugesagt";
-          acceptedCount++;
-          break;
-        case 'acceptedWithReservation':
-          statusText = "☑️ Zugesagt mit Vorbehalt";
-          acceptedWithReservationCount++;
-          break;
-        case 'acceptedWithoutTime':
-          statusText = "⏱️ Zugesagt ohne Uhrzeitgarantie";
-          acceptedWithoutTimeCount++;
-          break;
-        case 'declined':
-          statusText = "❌ Abgesagt";
-          declinedCount++;
-          break;
-        case 'otherTime':
-          statusText = `🕒 Andere Uhrzeit: ${participant.alternativeTime}`;
-          otherTimeCount++;
-          break;
-        default:
-          statusText = "⏳ Warte auf Antwort";
-          pendingCount++;
-      }
-      
-      participantsText += `<@${participant.userId}>: ${statusText}\n`;
-    }
-    
-    // Teilnehmeranzahl für die Überschrift
-    const totalParticipants = event.participants.length;
-    
-    // Zusammenfassung der Status-Zahlen
-    const statusSummary = `| ✅ ${acceptedCount} | ☑️ ${acceptedWithReservationCount} | ⏱️ ${acceptedWithoutTimeCount} | 🕒 ${otherTimeCount} | ❌ ${declinedCount} | ⏳ ${pendingCount} |`;
-    
-    if (participantsText === "") {
-      participantsText = "Keine Teilnehmer eingeladen.";
-    } else {
-      // Füge Statusübersicht mit Abstand hinzu
-      participantsText += `\n${statusSummary}`;
-    }
-    
-    // Status als Text mit Abbruchgrund
-    let statusText = event.status === 'active' 
-      ? 'Aktiv' 
-      : event.status === 'closed' 
-        ? 'Geschlossen' 
-        : 'Abgebrochen';
-    
-    // Abbruchgrund hinzufügen, falls vorhanden
-    if (event.status === 'cancelled' && event.cancellationReason) {
-      statusText += ` (${event.cancellationReason})`;
-    }
-    
-    // Beschreibung mit optionalem relativem Datum und Kommentar
-    let description = `Termin für ${event.date} um ${event.time} Uhr.`;
-    
-    if (event.relativeDate) {
-      description += `\nDas ist ${event.relativeDate}`;
-    }
-    
-    if (event.comment) {
-      description += `\n\n**Kommentar:** ${event.comment}`;
-    }
-    
-    description += `\n\nStatus der Teilnehmer:`;
-    
-    // Farbe basierend auf Event-Status bestimmen
-    let embedColor = '#0099ff'; // Standard blau für aktive Events
-    switch (event.status) {
-      case 'active':
-        embedColor = '#0099ff'; // Blau
-        break;
-      case 'closed':
-        embedColor = '#00ff00'; // Grün
-        break;
-      case 'cancelled':
-        embedColor = '#ff0000'; // Rot
-        break;
-    }
-    
-    // Embed für Server-Channel aktualisieren
-    const updatedEmbed = new EmbedBuilder()
-      .setColor(embedColor as any)
-      .setTitle(`Terminplanung: ${event.title}`)
-      .setDescription(description)
-      .addFields({ name: `Teilnehmer (${totalParticipants})`, value: participantsText })
+    // Create embed for server channel
+    const serverEmbed = new EmbedBuilder()
+      .setColor('#0099ff')
+      .setTitle(`Terminplanung: ${title}`)
+      .setDescription(`Termin für ${date} um ${time} Uhr.${relativeDate ? `\nDas ist ${relativeDate}` : ''}${comment ? `\n\n**Kommentar:** ${comment}` : ''}\n`)
       .setTimestamp()
-      .setFooter({ text: `Event ID: ${event.id} • Status: ${statusText}` });
+      .setFooter({ text: `Event ID: ${eventId} • Status: Aktiv` });
     
-    // Admin-Buttons aktualisieren (erste Reihe)
-    const updatedAdminButtons = new ActionRowBuilder<ButtonBuilder>();
-    
-    if (event.status === 'active') {
-      updatedAdminButtons.addComponents(
+    // Admin buttons
+    const adminButtons = new ActionRowBuilder<ButtonBuilder>()
+      .addComponents(
         new ButtonBuilder()
           .setCustomId(`manage:${eventId}:remind`)
           .setLabel('Erinnerung senden')
@@ -383,13 +236,10 @@ export async function updateEventMessage(eventId: string): Promise<void> {
           .setLabel('Terminsuche schließen')
           .setStyle(ButtonStyle.Primary)
       );
-    }
     
-    // Teilnehmer-Buttons aktualisieren (zweite Reihe - alle 5 Buttons)
-    const updatedResponseButtons = new ActionRowBuilder<ButtonBuilder>();
-    
-    if (event.status === 'active') {
-      updatedResponseButtons.addComponents(
+    // Response buttons
+    const responseButtons = new ActionRowBuilder<ButtonBuilder>()
+      .addComponents(
         new ButtonBuilder()
           .setCustomId(`respond:${eventId}:accept`)
           .setLabel('Zusagen')
@@ -411,18 +261,728 @@ export async function updateEventMessage(eventId: string): Promise<void> {
           .setLabel('Absagen')
           .setStyle(ButtonStyle.Danger)
       );
+
+    // Send message in server channel
+    const message = await channel.send({
+      embeds: [serverEmbed],
+      components: [adminButtons, responseButtons]
+    });
+    
+    // Create event in database
+    await db.insert(events).values({
+      id: eventId,
+      serverId: serverId,
+      title: title,
+      date: date,
+      time: time,
+      parsedDate: parsedDate,
+      relativeDate: relativeDate || null,
+      comment: comment || null,
+      channelId: channel.id,
+      messageId: message.id,
+      organizerId: organizerId,
+      status: 'ACTIVE',
+      remindersSent: 0,
+      createdAt: new Date()
+    });
+    
+    // Create audit log
+    await createAuditLog(eventId, 'EVENT_CREATED', organizerId, {
+      title,
+      date,
+      time,
+      participantCount: participantUserIds.length
+    });
+    
+    console.log(`✅ Event created: ${eventId}`);
+    return eventId;
+  } catch (error) {
+    console.error('Error creating event:', error);
+    throw error;
+  }
+}
+
+// DM an Teilnehmer senden
+export async function inviteParticipant(
+  eventId: string,
+  user: User,
+  title: string,
+  date: string,
+  time: string,
+  relativeDate?: string | null,
+  comment?: string | null
+): Promise<boolean> {
+  try {
+    // Get event from database
+    const eventData = await db.select()
+      .from(events)
+      .where(eq(events.id, eventId))
+      .limit(1);
+    
+    if (eventData.length === 0) {
+      console.error(`Event ${eventId} not found`);
+      return false;
     }
     
-    const components = event.status === 'active' 
-      ? [updatedAdminButtons, updatedResponseButtons] 
-      : [];
+    const event = eventData[0];
     
-    await message.edit({
-      embeds: [updatedEmbed],
-      components: components
+    // Ensure server user exists
+    const serverUserId = await ensureServerUser(event.serverId, user.id, user.username);
+    
+    // Check if participant already exists
+    const existingParticipant = await db.select()
+      .from(participants)
+      .where(and(eq(participants.eventId, eventId), eq(participants.serverUserId, serverUserId)))
+      .limit(1);
+    
+    if (existingParticipant.length > 0) {
+      console.log(`Participant ${user.username} already exists for event ${eventId}`);
+      return true;
+    }
+    
+    // Create participant
+    const [newParticipant] = await db.insert(participants).values({
+      eventId: eventId,
+      serverUserId: serverUserId,
+      currentStatus: 'PENDING',
+      invitedAt: new Date()
+    }).returning();
+    
+    // Calculate response time context
+    const hoursBeforeEvent = calculateHoursBeforeEvent(date, time);
+    
+    // Create initial response history
+    await createResponseHistory(
+      newParticipant.id, 
+      null, 
+      'PENDING', 
+      0, // No response time yet
+      undefined,
+      'INITIAL',
+      hoursBeforeEvent
+    );
+    
+    // Create audit log
+    await createAuditLog(eventId, 'PARTICIPANT_INVITED', user.id, {
+      participantId: newParticipant.id,
+      username: user.username
+    });
+    
+    // Create DM embed
+    let description = `Du wurdest eingeladen am ${date} an ${title} teilzunehmen, um ${time} Uhr.`;
+    
+    if (relativeDate) {
+      description += `\nDas ist ${relativeDate}`;
+    }
+    
+    if (comment) {
+      description += `\n\n**Kommentar:** ${comment}`;
+    }
+    
+    const dmEmbed = new EmbedBuilder()
+      .setColor('#0099ff')
+      .setTitle(`Terminsuche: ${title}`)
+      .setDescription(description)
+      .setTimestamp()
+      .setFooter({ text: `Event ID: ${eventId}` });
+    
+    // DM buttons
+    const dmRow = new ActionRowBuilder<ButtonBuilder>()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`respond:${eventId}:accept`)
+          .setLabel('Zusagen')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`respond:${eventId}:acceptWithReservation`)
+          .setLabel('Zusagen mit Vorbehalt')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`respond:${eventId}:acceptNoTime`)
+          .setLabel('Zusagen ohne Uhrzeitgarantie')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`respond:${eventId}:otherTime`)
+          .setLabel('Andere Uhrzeit')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`respond:${eventId}:decline`)
+          .setLabel('Absagen')
+          .setStyle(ButtonStyle.Danger)
+      );
+    
+    try {
+      // Send DM only if event is still active
+      if (event.status === 'ACTIVE') {
+        await user.send({
+          embeds: [dmEmbed],
+          components: [dmRow]
+        });
+      } else {
+        await user.send({
+          embeds: [dmEmbed],
+          components: []
+        });
+      }
+      
+      // Update server user stats
+      await db.update(serverUsers)
+        .set({ 
+          totalInvites: sql`${serverUsers.totalInvites} + 1`,
+          lastActiveAt: new Date()
+        })
+        .where(eq(serverUsers.id, serverUserId));
+      
+      // Update event message
+      await updateEventMessage(eventId);
+      
+      return true;
+    } catch (error) {
+      console.error(`Could not send DM to ${user.username}:`, error);
+      
+      // Remove participant if DM failed
+      await db.delete(participants).where(eq(participants.id, newParticipant.id));
+      
+      return false;
+    }
+  } catch (error) {
+    console.error('Error inviting participant:', error);
+    return false;
+  }
+}
+
+// Event-Nachricht im Server aktualisieren
+export async function updateEventMessage(eventId: string): Promise<void> {
+  try {
+    // Get event with all related data
+    const eventData = await db.query.events.findFirst({
+      where: eq(events.id, eventId),
+      with: {
+        server: true,
+        participants: {
+          with: {
+            serverUser: true,
+            responseHistory: true
+          }
+        }
+      }
+    });
+    
+    if (!eventData) {
+      console.error(`Event ${eventId} not found`);
+      return;
+    }
+    
+    const client = (await import('./index')).default.client;
+    const channel = await client.channels.fetch(eventData.channelId) as TextChannel;
+    
+    if (!channel) {
+      console.error(`Channel for event ${eventId} not found`);
+      return;
+    }
+    
+    try {
+      const message = await channel.messages.fetch(eventData.messageId!);
+      
+      // Count status
+      let acceptedCount = 0;
+      let declinedCount = 0;
+      let acceptedWithoutTimeCount = 0;
+      let acceptedWithReservationCount = 0;
+      let pendingCount = 0;
+      let otherTimeCount = 0;
+      
+      // Build participants text
+      let participantsText = "";
+      for (const participant of eventData.participants) {
+        let statusText: string;
+        
+        switch (participant.currentStatus) {
+          case 'ACCEPTED':
+            statusText = "✅ Zugesagt";
+            acceptedCount++;
+            break;
+          case 'ACCEPTED_WITH_RESERVATION':
+            statusText = "☑️ Zugesagt mit Vorbehalt";
+            acceptedWithReservationCount++;
+            break;
+          case 'ACCEPTED_WITHOUT_TIME':
+            statusText = "⏱️ Zugesagt ohne Uhrzeitgarantie";
+            acceptedWithoutTimeCount++;
+            break;
+          case 'DECLINED':
+            statusText = "❌ Abgesagt";
+            declinedCount++;
+            break;
+          case 'OTHER_TIME':
+            statusText = `🕒 Andere Uhrzeit: ${participant.alternativeTime}`;
+            otherTimeCount++;
+            break;
+          default:
+            statusText = "⏳ Warte auf Antwort";
+            pendingCount++;
+        }
+        
+        participantsText += `<@${participant.serverUser.userId}>: ${statusText}\n`;
+      }
+      
+      const totalParticipants = eventData.participants.length;
+      const statusSummary = `| ✅ ${acceptedCount} | ☑️ ${acceptedWithReservationCount} | ⏱️ ${acceptedWithoutTimeCount} | 🕒 ${otherTimeCount} | ❌ ${declinedCount} | ⏳ ${pendingCount} |`;
+      
+      if (participantsText === "") {
+        participantsText = "Keine Teilnehmer eingeladen.";
+      } else {
+        participantsText += `\n${statusSummary}`;
+      }
+      
+      // Status text with cancellation reason
+      let statusText = eventData.status === 'ACTIVE' 
+        ? 'Aktiv' 
+        : eventData.status === 'CLOSED' 
+          ? 'Geschlossen' 
+          : 'Abgebrochen';
+      
+      if (eventData.status === 'CANCELLED' && eventData.cancellationReason) {
+        statusText += ` (${eventData.cancellationReason})`;
+      }
+      
+      // Description with optional relative date and comment
+      let description = `Termin für ${eventData.date} um ${eventData.time} Uhr.`;
+      
+      if (eventData.relativeDate) {
+        description += `\nDas ist ${eventData.relativeDate}`;
+      }
+      
+      if (eventData.comment) {
+        description += `\n\n**Kommentar:** ${eventData.comment}`;
+      }
+      
+      description += `\n\nStatus der Teilnehmer:`;
+      
+      // Embed color based on status
+      let embedColor = '#0099ff'; // Blue for active
+      switch (eventData.status) {
+        case 'ACTIVE':
+          embedColor = '#0099ff';
+          break;
+        case 'CLOSED':
+          embedColor = '#00ff00';
+          break;
+        case 'CANCELLED':
+          embedColor = '#ff0000';
+          break;
+      }
+      
+      // Update embed
+      const updatedEmbed = new EmbedBuilder()
+        .setColor(embedColor as any)
+        .setTitle(`Terminplanung: ${eventData.title}`)
+        .setDescription(description)
+        .addFields({ name: `Teilnehmer (${totalParticipants})`, value: participantsText })
+        .setTimestamp()
+        .setFooter({ text: `Event ID: ${eventData.id} • Status: ${statusText}` });
+      
+      // Update admin buttons
+      const updatedAdminButtons = new ActionRowBuilder<ButtonBuilder>();
+      
+      if (eventData.status === 'ACTIVE') {
+        updatedAdminButtons.addComponents(
+          new ButtonBuilder()
+            .setCustomId(`manage:${eventId}:remind`)
+            .setLabel('Erinnerung senden')
+            .setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder()
+            .setCustomId(`manage:${eventId}:startReminder`)
+            .setLabel('Termin Starterinnerung')
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId(`manage:${eventId}:cancel`)
+            .setLabel('Terminsuche abbrechen')
+            .setStyle(ButtonStyle.Danger),
+          new ButtonBuilder()
+            .setCustomId(`manage:${eventId}:close`)
+            .setLabel('Terminsuche schließen')
+            .setStyle(ButtonStyle.Primary)
+        );
+      }
+      
+      // Update response buttons
+      const updatedResponseButtons = new ActionRowBuilder<ButtonBuilder>();
+      
+      if (eventData.status === 'ACTIVE') {
+        updatedResponseButtons.addComponents(
+          new ButtonBuilder()
+            .setCustomId(`respond:${eventId}:accept`)
+            .setLabel('Zusagen')
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId(`respond:${eventId}:acceptWithReservation`)
+            .setLabel('Zusagen mit Vorbehalt')
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId(`respond:${eventId}:acceptNoTime`)
+            .setLabel('Zusagen ohne Uhrzeitgarantie')
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId(`respond:${eventId}:otherTime`)
+            .setLabel('Andere Uhrzeit')
+            .setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder()
+            .setCustomId(`respond:${eventId}:decline`)
+            .setLabel('Absagen')
+            .setStyle(ButtonStyle.Danger)
+        );
+      }
+      
+      const components = eventData.status === 'ACTIVE' 
+        ? [updatedAdminButtons, updatedResponseButtons] 
+        : [];
+      
+      await message.edit({
+        embeds: [updatedEmbed],
+        components: components
+      });
+    } catch (error) {
+      console.error(`Error updating event message:`, error);
+    }
+  } catch (error) {
+    console.error('Error in updateEventMessage:', error);
+  }
+}
+
+// Response handling
+export async function handleResponse(interaction: ButtonInteraction, eventId: string, response: string): Promise<void> {
+  try {
+    // Get event
+    const eventData = await db.select()
+      .from(events)
+      .where(eq(events.id, eventId))
+      .limit(1);
+    
+    if (eventData.length === 0) {
+      await interaction.reply({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
+      return;
+    }
+    
+    const event = eventData[0];
+    
+    // Check if event is active
+    if (event.status !== 'ACTIVE') {
+      let statusMessage = `Diese Terminsuche wurde ${event.status === 'CLOSED' ? 'geschlossen' : 'abgebrochen'}.`;
+      
+      if (event.status === 'CANCELLED' && event.cancellationReason) {
+        statusMessage += `\n\n**Grund:** ${event.cancellationReason}`;
+      }
+      
+      await interaction.reply({ 
+        content: statusMessage, 
+        ephemeral: true 
+      });
+      return;
+    }
+    
+    // Get server user ID
+    const serverUserId = await getServerUserId(event.serverId, interaction.user.id);
+    if (!serverUserId) {
+      await interaction.reply({ content: "Du bist nicht zu diesem Termin eingeladen. Nur eingeladene Teilnehmer können antworten.", ephemeral: true });
+      return;
+    }
+    
+    // Get participant
+    const participantData = await db.select()
+      .from(participants)
+      .where(and(
+        eq(participants.eventId, eventId),
+        eq(participants.serverUserId, serverUserId)
+      ))
+      .limit(1);
+    
+    if (participantData.length === 0) {
+      await interaction.reply({ content: "Du bist nicht zu diesem Termin eingeladen. Nur eingeladene Teilnehmer können antworten.", ephemeral: true });
+      return;
+    }
+    
+    const participant = participantData[0];
+    
+    // Handle "other time" response
+    if (response === 'otherTime') {
+      await showAlternativeTimeModal(interaction, eventId);
+      return;
+    }
+    
+    // Update participant status
+    const oldStatus = participant.currentStatus;
+    let newStatus: string;
+    let responseMessage = "";
+    
+    switch (response) {
+      case 'accept':
+        newStatus = 'ACCEPTED';
+        responseMessage = `Danke für deine Zusage für "${event.title}" am ${event.date} um ${event.time} Uhr!`;
+        break;
+      case 'acceptWithReservation':
+        newStatus = 'ACCEPTED_WITH_RESERVATION';
+        responseMessage = `Danke für deine Zusage mit Vorbehalt für "${event.title}" am ${event.date} um ${event.time} Uhr!`;
+        break;
+      case 'acceptNoTime':
+        newStatus = 'ACCEPTED_WITHOUT_TIME';
+        responseMessage = `Danke für deine Zusage für "${event.title}" am ${event.date}! Du hast angegeben, dass du ohne Uhrzeitgarantie teilnimmst.`;
+        break;
+      case 'decline':
+        newStatus = 'DECLINED';
+        responseMessage = `Du hast für "${event.title}" am ${event.date} abgesagt.`;
+        break;
+      default:
+        await interaction.reply({ content: "Unbekannte Antwort.", ephemeral: true });
+        return;
+    }
+    
+    // Update participant
+    await db.update(participants)
+      .set({ currentStatus: newStatus as any })
+      .where(eq(participants.id, participant.id));
+    
+    // Calculate response metrics
+    const responseTimeSeconds = Math.floor((Date.now() - participant.invitedAt.getTime()) / 1000);
+    const hoursBeforeEvent = calculateHoursBeforeEvent(event.date, event.time);
+    
+    // Determine response context
+    let responseContext: 'INITIAL' | 'AFTER_REMINDER' | 'AFTER_START_REMINDER' | 'LAST_MINUTE' = 'INITIAL';
+    if (hoursBeforeEvent < 6) {
+      responseContext = 'LAST_MINUTE';
+    }
+    // Note: 'AFTER_REMINDER' and 'AFTER_START_REMINDER' would be set in reminder functions
+    
+    // Create response history
+    await createResponseHistory(
+      participant.id, 
+      oldStatus, 
+      newStatus, 
+      responseTimeSeconds,
+      undefined,
+      responseContext,
+      hoursBeforeEvent
+    );
+    
+    // Create audit log
+    await createAuditLog(eventId, 'PARTICIPANT_RESPONDED', interaction.user.id, {
+      participantId: participant.id,
+      oldStatus,
+      newStatus,
+      responseTimeSeconds,
+      hoursBeforeEvent
+    });
+    
+    // Update user stats
+    await db.update(serverUsers)
+      .set({ 
+        totalResponses: sql`${serverUsers.totalResponses} + 1`,
+        lastActiveAt: new Date()
+      })
+      .where(eq(serverUsers.id, serverUserId));
+    
+    await updateEventMessage(eventId);
+    await interaction.reply({ content: responseMessage, ephemeral: true });
+  } catch (error) {
+    console.error('Error handling response:', error);
+    await interaction.reply({ content: "Ein Fehler ist aufgetreten.", ephemeral: true });
+  }
+}
+
+// Show alternative time modal
+export async function showAlternativeTimeModal(interaction: ButtonInteraction, eventId: string): Promise<void> {
+  const modal = new ModalBuilder()
+    .setCustomId(`alternativeTime:${eventId}`)
+    .setTitle('Alternative Uhrzeit angeben');
+  
+  const hourInput = new TextInputBuilder()
+    .setCustomId('hourInput')
+    .setLabel('Stunde (00-23)')
+    .setPlaceholder('14')
+    .setStyle(TextInputStyle.Short)
+    .setMinLength(1)
+    .setMaxLength(2)
+    .setRequired(true);
+  
+  const minuteInput = new TextInputBuilder()
+    .setCustomId('minuteInput')
+    .setLabel('Minute (00-59)')
+    .setPlaceholder('30')
+    .setStyle(TextInputStyle.Short)
+    .setMinLength(1)
+    .setMaxLength(2)
+    .setRequired(true);
+  
+  const firstActionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(hourInput);
+  const secondActionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(minuteInput);
+  
+  modal.addComponents(firstActionRow, secondActionRow);
+  
+  await interaction.showModal(modal);
+}
+
+// Handle alternative time modal
+export async function handleAlternativeTime(
+  interaction: ModalSubmitInteraction, 
+  eventId: string
+): Promise<void> {
+  try {
+    // Get event
+    const eventData = await db.select()
+      .from(events)
+      .where(eq(events.id, eventId))
+      .limit(1);
+    
+    if (eventData.length === 0) {
+      await interaction.reply({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
+      return;
+    }
+    
+    const event = eventData[0];
+    
+    // Check if event is active
+    if (event.status !== 'ACTIVE') {
+      await interaction.reply({ 
+        content: `Diese Terminsuche wurde ${event.status === 'CLOSED' ? 'geschlossen' : 'abgebrochen'}.`, 
+        ephemeral: true 
+      });
+      return;
+    }
+    
+    // Get server user ID
+    const serverUserId = await getServerUserId(event.serverId, interaction.user.id);
+    if (!serverUserId) {
+      await interaction.reply({ content: "Du bist kein Teilnehmer dieses Events.", ephemeral: true });
+      return;
+    }
+    
+    // Get participant
+    const participantData = await db.select()
+      .from(participants)
+      .where(and(
+        eq(participants.eventId, eventId),
+        eq(participants.serverUserId, serverUserId)
+      ))
+      .limit(1);
+    
+    if (participantData.length === 0) {
+      await interaction.reply({ content: "Du bist kein Teilnehmer dieses Events.", ephemeral: true });
+      return;
+    }
+    
+    const participant = participantData[0];
+    
+    // Get and validate input
+    const hourInput = interaction.fields.getTextInputValue('hourInput');
+    const minuteInput = interaction.fields.getTextInputValue('minuteInput');
+    
+    if (!/^\d+$/.test(hourInput) || !/^\d+$/.test(minuteInput)) {
+      await interaction.reply({ 
+        content: "Bitte gib nur Zahlen für Stunde und Minute ein.", 
+        ephemeral: true 
+      });
+      return;
+    }
+    
+    const hour = parseInt(hourInput);
+    const minute = parseInt(minuteInput);
+    
+    if (hour < 0 || hour > 23) {
+      await interaction.reply({ 
+        content: "Die Stunde muss zwischen 00 und 23 liegen.", 
+        ephemeral: true 
+      });
+      return;
+    }
+    
+    if (minute < 0 || minute > 59) {
+      await interaction.reply({ 
+        content: "Die Minute muss zwischen 00 und 59 liegen.", 
+        ephemeral: true 
+      });
+      return;
+    }
+    
+    const formattedTime = `ca. ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} Uhr`;
+    
+    // Update participant
+    const oldStatus = participant.currentStatus;
+    await db.update(participants)
+      .set({ 
+        currentStatus: 'OTHER_TIME',
+        alternativeTime: formattedTime
+      })
+      .where(eq(participants.id, participant.id));
+    
+    // Calculate response metrics
+    const responseTimeSeconds = Math.floor((Date.now() - participant.invitedAt.getTime()) / 1000);
+    const hoursBeforeEvent = calculateHoursBeforeEvent(event.date, event.time);
+    
+    // Determine response context
+    let responseContext: 'INITIAL' | 'AFTER_REMINDER' | 'AFTER_START_REMINDER' | 'LAST_MINUTE' = 'INITIAL';
+    if (hoursBeforeEvent < 6) {
+      responseContext = 'LAST_MINUTE';
+    }
+    
+    // Create response history
+    await createResponseHistory(
+      participant.id, 
+      oldStatus, 
+      'OTHER_TIME', 
+      responseTimeSeconds, 
+      formattedTime,
+      responseContext,
+      hoursBeforeEvent
+    );
+    
+    // Create audit log
+    await createAuditLog(eventId, 'PARTICIPANT_RESPONDED', interaction.user.id, {
+      participantId: participant.id,
+      oldStatus,
+      newStatus: 'OTHER_TIME',
+      alternativeTime: formattedTime,
+      responseTimeSeconds,
+      hoursBeforeEvent
+    });
+    
+    // Update user stats
+    await db.update(serverUsers)
+      .set({ 
+        totalResponses: sql`${serverUsers.totalResponses} + 1`,
+        lastActiveAt: new Date()
+      })
+      .where(eq(serverUsers.id, serverUserId));
+    
+    await updateEventMessage(eventId);
+    await interaction.reply({ 
+      content: `Danke für deine Antwort! Du hast für "${event.title}" am ${event.date} eine alternative Uhrzeit (${formattedTime}) angegeben.`, 
+      ephemeral: true 
     });
   } catch (error) {
-    console.error(`Fehler beim Aktualisieren der Event-Nachricht:`, error);
+    console.error('Error handling alternative time:', error);
+    await interaction.reply({ content: "Ein Fehler ist aufgetreten.", ephemeral: true });
+  }
+}
+
+// Event schließen
+export async function closeEvent(interaction: ButtonInteraction, eventId: string): Promise<void> {
+  try {
+    // Update event status
+    await db.update(events)
+      .set({ 
+        status: 'CLOSED',
+        closedAt: new Date()
+      })
+      .where(eq(events.id, eventId));
+    
+    // Create audit log
+    await createAuditLog(eventId, 'EVENT_CLOSED', interaction.user.id);
+    
+    await updateEventMessage(eventId);
+    await interaction.reply({ content: "Die Terminsuche wurde geschlossen.", ephemeral: true });
+  } catch (error) {
+    console.error('Error closing event:', error);
+    await interaction.reply({ content: "Ein Fehler ist aufgetreten.", ephemeral: true });
   }
 }
 
@@ -466,21 +1026,24 @@ export async function handleCancelEvent(
   try {
     await interaction.deferReply({ ephemeral: true });
     
-    const events = loadEvents();
-    const eventIndex = events.findIndex(e => e.id === eventId);
+    // Get event
+    const eventData = await db.select()
+      .from(events)
+      .where(eq(events.id, eventId))
+      .limit(1);
     
-    if (eventIndex === -1) {
+    if (eventData.length === 0) {
       await interaction.editReply({ content: "Dieses Event existiert nicht mehr." });
       return;
     }
     
-    const event = events[eventIndex];
+    const event = eventData[0];
     
-    // Abbruchgrund und Benachrichtigungsoption aus den Eingabefeldern holen
+    // Get input
     const reasonInput = interaction.fields.getTextInputValue('reasonInput').trim();
     const notifyInput = interaction.fields.getTextInputValue('notifyInput').trim();
     
-    // Validierung der Benachrichtigungsoption
+    // Validate notification option
     if (notifyInput !== '0' && notifyInput !== '1') {
       await interaction.editReply({ 
         content: "Bitte gib nur '0' (keine Benachrichtigung) oder '1' (Benachrichtigung senden) ein." 
@@ -490,31 +1053,37 @@ export async function handleCancelEvent(
     
     const shouldNotify = notifyInput === '1';
     
-    // Event als abgebrochen markieren
-    events[eventIndex].status = 'cancelled';
+    // Update event status
+    await db.update(events)
+      .set({ 
+        status: 'CANCELLED',
+        cancelledAt: new Date(),
+        cancellationReason: reasonInput || null
+      })
+      .where(eq(events.id, eventId));
     
-    // Abbruchgrund speichern, falls angegeben
-    if (reasonInput) {
-      events[eventIndex].cancellationReason = reasonInput;
-    }
+    // Create audit log
+    await createAuditLog(eventId, 'EVENT_CANCELLED', interaction.user.id, {
+      reason: reasonInput,
+      shouldNotify
+    });
     
-    saveEvents(events);
-    
-    // Benachrichtigungen senden, falls gewünscht
     let notificationCount = 0;
     let notificationErrors = 0;
     
     if (shouldNotify) {
-      // Teilnehmer mit Zusagen finden
-      const participantsToNotify = event.participants.filter(p => 
-        p.status === 'accepted' || 
-        p.status === 'acceptedWithoutTime' || 
-        p.status === 'acceptedWithReservation' ||
-        p.status === 'otherTime'
-      );
+      // Get participants with positive responses
+      const participantsToNotify = await db.query.participants.findMany({
+        where: and(
+          eq(participants.eventId, eventId),
+          inArray(participants.currentStatus, ['ACCEPTED', 'ACCEPTED_WITHOUT_TIME', 'ACCEPTED_WITH_RESERVATION', 'OTHER_TIME'])
+        ),
+        with: {
+          serverUser: true
+        }
+      });
       
       if (participantsToNotify.length > 0) {
-        // Abbruch-Nachricht erstellen
         let cancellationMessage = `Der Termin "${event.title}" am ${event.date} um ${event.time} Uhr wurde abgebrochen.`;
         
         if (reasonInput) {
@@ -522,30 +1091,29 @@ export async function handleCancelEvent(
         }
         
         const cancellationEmbed = new EmbedBuilder()
-          .setColor('#FF0000') // Rot für Abbruch
+          .setColor('#FF0000')
           .setTitle(`❌ Termin abgebrochen: ${event.title}`)
           .setDescription(cancellationMessage)
           .setTimestamp()
           .setFooter({ text: `Event ID: ${eventId}` });
         
-        // Benachrichtigungen senden
+        // Send notifications
         for (const participant of participantsToNotify) {
           try {
-            const user = await interaction.client.users.fetch(participant.userId);
+            const user = await interaction.client.users.fetch(participant.serverUser.userId);
             await user.send({ embeds: [cancellationEmbed] });
             notificationCount++;
           } catch (error) {
-            console.error(`Konnte keine Abbruchbenachrichtigung an ${participant.username} senden:`, error);
+            console.error(`Could not send cancellation notification to ${participant.serverUser.username}:`, error);
             notificationErrors++;
           }
         }
       }
     }
     
-    // Server-Channel-Nachricht aktualisieren
     await updateEventMessage(eventId);
     
-    // Rückmeldung an den Admin
+    // Response to admin
     let responseMessage = `Die Terminsuche "${event.title}" wurde erfolgreich abgebrochen.`;
     
     if (reasonInput) {
@@ -562,7 +1130,7 @@ export async function handleCancelEvent(
     
     await interaction.editReply({ content: responseMessage });
   } catch (error) {
-    console.error('Fehler beim Abbrechen des Events:', error);
+    console.error('Error cancelling event:', error);
     
     try {
       if (interaction.deferred) {
@@ -571,7 +1139,7 @@ export async function handleCancelEvent(
         await interaction.reply({ content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.", ephemeral: true });
       }
     } catch (e) {
-      console.error("Fehler bei der Fehlermeldung:", e);
+      console.error("Error with error message:", e);
     }
   }
 }
@@ -579,33 +1147,39 @@ export async function handleCancelEvent(
 // Erinnerung an nicht antwortende Teilnehmer senden
 export async function sendReminders(interaction: ButtonInteraction, eventId: string): Promise<void> {
   try {
-    // Sofort auf die Interaktion antworten, um den Timeout zu vermeiden
     await interaction.reply({ 
       content: "Sende Erinnerungen an Teilnehmer ohne Antwort...", 
       ephemeral: true 
     });
 
-    const events = loadEvents();
-    const eventIndex = events.findIndex(e => e.id === eventId);
+    // Get event with pending participants
+    const eventData = await db.query.events.findFirst({
+      where: eq(events.id, eventId),
+      with: {
+        participants: {
+          where: eq(participants.currentStatus, 'PENDING'),
+          with: {
+            serverUser: true
+          }
+        }
+      }
+    });
     
-    if (eventIndex === -1) {
+    if (!eventData) {
       await interaction.followUp({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
       return;
     }
     
-    const event = events[eventIndex];
-    
-    // Prüfen, ob das Event noch aktiv ist
-    if (event.status !== 'active') {
+    // Check if event is active
+    if (eventData.status !== 'ACTIVE') {
       await interaction.followUp({ 
-        content: `Diese Terminsuche wurde ${event.status === 'closed' ? 'geschlossen' : 'abgebrochen'}.`, 
+        content: `Diese Terminsuche wurde ${eventData.status === 'CLOSED' ? 'geschlossen' : 'abgebrochen'}.`, 
         ephemeral: true 
       });
       return;
     }
     
-    // Teilnehmer ohne Antwort finden
-    const pendingParticipants = event.participants.filter(p => p.status === 'pending');
+    const pendingParticipants = eventData.participants;
     
     if (pendingParticipants.length === 0) {
       await interaction.followUp({ 
@@ -615,32 +1189,31 @@ export async function sendReminders(interaction: ButtonInteraction, eventId: str
       return;
     }
     
-    // Erinnerung an jeden Teilnehmer ohne Antwort senden
     let successCount = 0;
     let failCount = 0;
     
-    // Beschreibung mit optionalem relativem Datum und Kommentar für Erinnerung
-    let reminderDescription = `Erinnerung: Du wurdest eingeladen am ${event.date} an ${event.title} teilzunehmen, um ${event.time} Uhr.`;
+    // Create reminder description
+    let reminderDescription = `Erinnerung: Du wurdest eingeladen am ${eventData.date} an ${eventData.title} teilzunehmen, um ${eventData.time} Uhr.`;
     
-    if (event.relativeDate) {
-      reminderDescription += `\nDas ist ${event.relativeDate}`;
+    if (eventData.relativeDate) {
+      reminderDescription += `\nDas ist ${eventData.relativeDate}`;
     }
     
-    if (event.comment) {
-      reminderDescription += `\n\n**Kommentar:** ${event.comment}`;
+    if (eventData.comment) {
+      reminderDescription += `\n\n**Kommentar:** ${eventData.comment}`;
     }
     
     reminderDescription += `\n\n**Bitte antworte auf die Einladung.**`;
     
-    // Embed für Erinnerung erstellen
+    // Create reminder embed
     const reminderEmbed = new EmbedBuilder()
-      .setColor('#FFA500') // Orange für Erinnerung
-      .setTitle(`Erinnerung: Terminsuche ${event.title}`)
+      .setColor('#FFA500')
+      .setTitle(`Erinnerung: Terminsuche ${eventData.title}`)
       .setDescription(reminderDescription)
       .setTimestamp()
       .setFooter({ text: `Event ID: ${eventId}` });
     
-    // Buttons für Erinnerung (eine Reihe mit allen 5 Buttons)
+    // Reminder buttons
     const reminderRow = new ActionRowBuilder<ButtonBuilder>()
       .addComponents(
         new ButtonBuilder()
@@ -665,30 +1238,56 @@ export async function sendReminders(interaction: ButtonInteraction, eventId: str
           .setStyle(ButtonStyle.Danger)
       );
     
-    // Sende Erinnerungen
+    // Send reminders and track response context for future responses
     for (const participant of pendingParticipants) {
       try {
-        const user = await interaction.client.users.fetch(participant.userId);
+        const user = await interaction.client.users.fetch(participant.serverUser.userId);
         await user.send({
           embeds: [reminderEmbed],
           components: [reminderRow]
         });
+        
+        // Create response history entry for reminder sent
+        const hoursBeforeEvent = calculateHoursBeforeEvent(eventData.date, eventData.time);
+        await createResponseHistory(
+          participant.id,
+          'PENDING',
+          'PENDING',
+          0,
+          undefined,
+          'AFTER_REMINDER',
+          hoursBeforeEvent
+        );
+        
         successCount++;
       } catch (error) {
-        console.error(`Konnte keine Erinnerung an ${participant.username} senden:`, error);
+        console.error(`Could not send reminder to ${participant.serverUser.username}:`, error);
         failCount++;
       }
     }
     
-    // Rückmeldung an den Admin als follow-up
+    // Update event reminders sent count
+    await db.update(events)
+      .set({ 
+        remindersSent: sql`${events.remindersSent} + 1`
+      })
+      .where(eq(events.id, eventId));
+    
+    // Create audit log
+    await createAuditLog(eventId, 'REMINDER_SENT', interaction.user.id, {
+      successCount,
+      failCount,
+      totalPending: pendingParticipants.length
+    });
+    
     await interaction.followUp({ 
       content: `Erinnerungen gesendet!\n` +
         `✅ ${successCount} Erinnerungen erfolgreich versandt.\n` +
         (failCount > 0 ? `❌ ${failCount} Erinnerungen konnten nicht zugestellt werden.` : ''),
       ephemeral: true 
     });
-  } catch (mainError) {
-    console.error('KRITISCHER FEHLER BEI ERINNERUNG:', mainError);
+  } catch (error) {
+    console.error('Error sending reminders:', error);
     
     try {
       if (!interaction.replied) {
@@ -703,7 +1302,7 @@ export async function sendReminders(interaction: ButtonInteraction, eventId: str
         });
       }
     } catch (e) {
-      console.error('Konnte auch keine Fehlermeldung senden:', e);
+      console.error('Could not send error message:', e);
     }
   }
 }
@@ -711,38 +1310,39 @@ export async function sendReminders(interaction: ButtonInteraction, eventId: str
 // Starterinnerung an zugesagte Teilnehmer senden
 export async function sendStartReminder(interaction: ButtonInteraction, eventId: string): Promise<void> {
   try {
-    // Sofort auf die Interaktion antworten, um den Timeout zu vermeiden
     await interaction.reply({ 
       content: "Sende Starterinnerungen an alle zugesagten Teilnehmer...", 
       ephemeral: true 
     });
 
-    const events = loadEvents();
-    const eventIndex = events.findIndex(e => e.id === eventId);
+    // Get event with eligible participants
+    const eventData = await db.query.events.findFirst({
+      where: eq(events.id, eventId),
+      with: {
+        participants: {
+          where: inArray(participants.currentStatus, ['ACCEPTED', 'ACCEPTED_WITHOUT_TIME', 'ACCEPTED_WITH_RESERVATION', 'OTHER_TIME']),
+          with: {
+            serverUser: true
+          }
+        }
+      }
+    });
     
-    if (eventIndex === -1) {
+    if (!eventData) {
       await interaction.followUp({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
       return;
     }
     
-    const event = events[eventIndex];
-    
-    // Prüfen, ob das Event noch aktiv ist
-    if (event.status !== 'active') {
+    // Check if event is active
+    if (eventData.status !== 'ACTIVE') {
       await interaction.followUp({ 
-        content: `Diese Terminsuche wurde ${event.status === 'closed' ? 'geschlossen' : 'abgebrochen'}.`, 
+        content: `Diese Terminsuche wurde ${eventData.status === 'CLOSED' ? 'geschlossen' : 'abgebrochen'}.`, 
         ephemeral: true 
       });
       return;
     }
     
-    // Teilnehmer finden, die zugesagt haben oder eine andere Uhrzeit angegeben haben
-    const eligibleParticipants = event.participants.filter(p => 
-      p.status === 'accepted' || 
-      p.status === 'acceptedWithoutTime' || 
-      p.status === 'acceptedWithReservation' ||
-      p.status === 'otherTime'
-    );
+    const eligibleParticipants = eventData.participants;
     
     if (eligibleParticipants.length === 0) {
       await interaction.followUp({ 
@@ -752,51 +1352,57 @@ export async function sendStartReminder(interaction: ButtonInteraction, eventId:
       return;
     }
     
-    // Starterinnerung an jeden zugesagten Teilnehmer senden
     let successCount = 0;
     let failCount = 0;
-    let errorDetails = "";
     
-    // Embed für Starterinnerung erstellen
+    // Create start reminder embed
     const startReminderEmbed = new EmbedBuilder()
       .setColor('#FEE75C') 
-      .setTitle(`🎮 Termin ${event.title} beginnt gleich!`)
-      .setDescription(`Der Termin beginnt am ${event.date} um ${event.time} Uhr.${event.relativeDate ? `\nDas ist ${event.relativeDate}` : ''}\n\n⏰ Bitte bereite dich auf den Start vor!${event.comment ? `\n\n**Kommentar:** ${event.comment}` : ''}`)
+      .setTitle(`🎮 Termin ${eventData.title} beginnt gleich!`)
+      .setDescription(`Der Termin beginnt am ${eventData.date} um ${eventData.time} Uhr.${eventData.relativeDate ? `\nDas ist ${eventData.relativeDate}` : ''}\n\n⏰ Bitte bereite dich auf den Start vor!${eventData.comment ? `\n\n**Kommentar:** ${eventData.comment}` : ''}`)
       .setTimestamp()
       .setFooter({ text: `Event ID: ${eventId}` });
 
-    // Sende Starterinnerungen
+    // Send start reminders and track context for any status changes afterward
     for (const participant of eligibleParticipants) {
       try {
-        const user = await interaction.client.users.fetch(participant.userId);
-        if (!user) {
-          console.error(`Benutzer mit ID ${participant.userId} konnte nicht gefunden werden.`);
-          failCount++;
-          errorDetails += `- Benutzer ${participant.username} (${participant.userId}) konnte nicht gefunden werden.\n`;
-          continue;
-        }
-        
+        const user = await interaction.client.users.fetch(participant.serverUser.userId);
         await user.send({ embeds: [startReminderEmbed] });
+        
+        // Create response history entry for start reminder sent
+        const hoursBeforeEvent = calculateHoursBeforeEvent(eventData.date, eventData.time);
+        await createResponseHistory(
+          participant.id,
+          participant.currentStatus,
+          participant.currentStatus,
+          0,
+          participant.alternativeTime || undefined,
+          'AFTER_START_REMINDER',
+          hoursBeforeEvent
+        );
+        
         successCount++;
       } catch (error) {
-        console.error(`Konnte keine Starterinnerung an ${participant.username} senden:`, error);
+        console.error(`Could not send start reminder to ${participant.serverUser.username}:`, error);
         failCount++;
-        errorDetails += `- Fehler beim Senden an ${participant.username}: ${error instanceof Error ? error.message : 'Unbekannter Fehler'}\n`;
       }
     }
     
-    // Abschließende Information als Follow-up senden
-    let responseContent = `Starterinnerungen gesendet!\n` +
-      `✅ ${successCount} Starterinnerungen erfolgreich versandt.\n` +
-      (failCount > 0 ? `❌ ${failCount} Starterinnerungen konnten nicht zugestellt werden.` : '');
+    // Create audit log
+    await createAuditLog(eventId, 'START_REMINDER_SENT', interaction.user.id, {
+      successCount,
+      failCount,
+      totalEligible: eligibleParticipants.length
+    });
     
-    if (failCount > 0 && errorDetails.length < 1800) {
-      responseContent += `\n\nFehlerdetails:\n${errorDetails}`;
-    }
-    
-    await interaction.followUp({ content: responseContent, ephemeral: true });
-  } catch (mainError) {
-    console.error('KRITISCHER FEHLER BEI STARTERINNERUNG:', mainError);
+    await interaction.followUp({ 
+      content: `Starterinnerungen gesendet!\n` +
+        `✅ ${successCount} Starterinnerungen erfolgreich versandt.\n` +
+        (failCount > 0 ? `❌ ${failCount} Starterinnerungen konnten nicht zugestellt werden.` : ''),
+      ephemeral: true 
+    });
+  } catch (error) {
+    console.error('Error sending start reminders:', error);
     
     try {
       if (!interaction.replied) {
@@ -811,216 +1417,27 @@ export async function sendStartReminder(interaction: ButtonInteraction, eventId:
         });
       }
     } catch (e) {
-      console.error('Konnte auch keine Fehlermeldung senden:', e);
+      console.error('Could not send error message:', e);
     }
   }
 }
 
-// Modal für alternative Uhrzeit anzeigen
-export async function showAlternativeTimeModal(interaction: ButtonInteraction, eventId: string): Promise<void> {
-  const modal = new ModalBuilder()
-    .setCustomId(`alternativeTime:${eventId}`)
-    .setTitle('Alternative Uhrzeit angeben');
-  
-  const hourInput = new TextInputBuilder()
-    .setCustomId('hourInput')
-    .setLabel('Stunde (00-23)')
-    .setPlaceholder('14')
-    .setStyle(TextInputStyle.Short)
-    .setMinLength(1)
-    .setMaxLength(2)
-    .setRequired(true);
-  
-  const minuteInput = new TextInputBuilder()
-    .setCustomId('minuteInput')
-    .setLabel('Minute (00-59)')
-    .setPlaceholder('30')
-    .setStyle(TextInputStyle.Short)
-    .setMinLength(1)
-    .setMaxLength(2)
-    .setRequired(true);
-  
-  const firstActionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(hourInput);
-  const secondActionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(minuteInput);
-  
-  modal.addComponents(firstActionRow, secondActionRow);
-  
-  await interaction.showModal(modal);
+// Helper function to load events (for backward compatibility)
+export function loadEvents() {
+  // This function is kept for compatibility but should not be used
+  // All data should now come from the database
+  console.warn('loadEvents() called - this function is deprecated. Use database queries instead.');
+  return [];
 }
 
-// Alternative Uhrzeit-Antwort verarbeiten
-export async function handleAlternativeTime(
-  interaction: ModalSubmitInteraction, 
-  eventId: string
-): Promise<void> {
-  const events = loadEvents();
-  const eventIndex = events.findIndex(e => e.id === eventId);
-  
-  if (eventIndex === -1) {
-    await interaction.reply({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
-    return;
-  }
-  
-  const event = events[eventIndex];
-  
-  // Prüfen, ob das Event noch aktiv ist
-  if (event.status !== 'active') {
-    await interaction.reply({ 
-      content: `Diese Terminsuche wurde ${event.status === 'closed' ? 'geschlossen' : 'abgebrochen'}.`, 
-      ephemeral: true 
-    });
-    return;
-  }
-  
-  // Teilnehmer finden
-  const participantIndex = event.participants.findIndex(p => p.userId === interaction.user.id);
-  
-  if (participantIndex === -1) {
-    await interaction.reply({ content: "Du bist kein Teilnehmer dieses Events.", ephemeral: true });
-    return;
-  }
-  
-  // Stunde und Minute aus den Eingabefeldern holen
-  const hourInput = interaction.fields.getTextInputValue('hourInput');
-  const minuteInput = interaction.fields.getTextInputValue('minuteInput');
-  
-  // Validierung: Nur Zahlen erlaubt
-  if (!/^\d+$/.test(hourInput) || !/^\d+$/.test(minuteInput)) {
-    await interaction.reply({ 
-      content: "Bitte gib nur Zahlen für Stunde und Minute ein.", 
-      ephemeral: true 
-    });
-    return;
-  }
-  
-  // In Zahlen umwandeln
-  const hour = parseInt(hourInput);
-  const minute = parseInt(minuteInput);
-  
-  // Validierung der Werte
-  if (hour < 0 || hour > 23) {
-    await interaction.reply({ 
-      content: "Die Stunde muss zwischen 00 und 23 liegen.", 
-      ephemeral: true 
-    });
-    return;
-  }
-  
-  if (minute < 0 || minute > 59) {
-    await interaction.reply({ 
-      content: "Die Minute muss zwischen 00 und 59 liegen.", 
-      ephemeral: true 
-    });
-    return;
-  }
-  
-  // Formatierung: Führende Nullen hinzufügen wenn nötig
-  const formattedHour = hour.toString().padStart(2, '0');
-  const formattedMinute = minute.toString().padStart(2, '0');
-  
-  // Finale Zeit mit "ca." und "Uhr" formatieren
-  const formattedTime = `ca. ${formattedHour}:${formattedMinute} Uhr`;
-  
-  // Teilnehmerstatus aktualisieren
-  event.participants[participantIndex].status = 'otherTime';
-  event.participants[participantIndex].alternativeTime = formattedTime;
-  
-  saveEvents(events);
-  
-  await updateEventMessage(eventId);
-  await interaction.reply({ 
-    content: `Danke für deine Antwort! Du hast für "${event.title}" am ${event.date} eine alternative Uhrzeit (${formattedTime}) angegeben.`, 
-    ephemeral: true 
-  });
+// Helper function to save events (for backward compatibility)
+export function saveEvents(events: any[]) {
+  // This function is kept for compatibility but should not be used
+  // All data should now be saved to the database
+  console.warn('saveEvents() called - this function is deprecated. Use database operations instead.');
 }
 
-// Antworten der Teilnehmer verarbeiten
-export async function handleResponse(interaction: ButtonInteraction, eventId: string, response: string): Promise<void> {
-  const events = loadEvents();
-  const eventIndex = events.findIndex(e => e.id === eventId);
-  
-  if (eventIndex === -1) {
-    await interaction.reply({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
-    return;
-  }
-  
-  const event = events[eventIndex];
-  
-  // Prüfen, ob das Event noch aktiv ist
-  if (event.status !== 'active') {
-    let statusMessage = `Diese Terminsuche wurde ${event.status === 'closed' ? 'geschlossen' : 'abgebrochen'}.`;
-    
-    // Abbruchgrund hinzufügen, falls vorhanden
-    if (event.status === 'cancelled' && event.cancellationReason) {
-      statusMessage += `\n\n**Grund:** ${event.cancellationReason}`;
-    }
-    
-    await interaction.reply({ 
-      content: statusMessage, 
-      ephemeral: true 
-    });
-    return;
-  }
-  
-  // Teilnehmer finden
-  const participantIndex = event.participants.findIndex(p => p.userId === interaction.user.id);
-  
-  if (participantIndex === -1) {
-    await interaction.reply({ content: "Du bist nicht zu diesem Termin eingeladen. Nur eingeladene Teilnehmer können antworten.", ephemeral: true });
-    return;
-  }
-  
-  // Bei "Andere Uhrzeit" das Modal anzeigen
-  if (response === 'otherTime') {
-    await showAlternativeTimeModal(interaction, eventId);
-    return;
-  }
-  
-  let responseMessage = "";
-  
-  switch (response) {
-    case 'accept':
-      event.participants[participantIndex].status = 'accepted';
-      responseMessage = `Danke für deine Zusage für "${event.title}" am ${event.date} um ${event.time} Uhr!`;
-      break;
-    case 'acceptWithReservation':
-      event.participants[participantIndex].status = 'acceptedWithReservation';
-      responseMessage = `Danke für deine Zusage mit Vorbehalt für "${event.title}" am ${event.date} um ${event.time} Uhr!`;
-      break;
-    case 'acceptNoTime':
-      event.participants[participantIndex].status = 'acceptedWithoutTime';
-      responseMessage = `Danke für deine Zusage für "${event.title}" am ${event.date}! Du hast angegeben, dass du ohne Uhrzeitgarantie teilnimmst.`;
-      break;
-    case 'decline':
-      event.participants[participantIndex].status = 'declined';
-      responseMessage = `Du hast für "${event.title}" am ${event.date} abgesagt.`;
-      break;
-  }
-  
-  saveEvents(events);
-  
-  await updateEventMessage(eventId);
-  await interaction.reply({ content: responseMessage, ephemeral: true });
-}
-
-// Event schließen
-export async function closeEvent(interaction: ButtonInteraction, eventId: string): Promise<void> {
-  const events = loadEvents();
-  const eventIndex = events.findIndex(e => e.id === eventId);
-  
-  if (eventIndex === -1) {
-    await interaction.reply({ content: "Dieses Event existiert nicht mehr.", ephemeral: true });
-    return;
-  }
-  
-  events[eventIndex].status = 'closed';
-  saveEvents(events);
-  
-  // Server-Channel-Nachricht aktualisieren
-  await updateEventMessage(eventId);
-  await interaction.reply({ content: "Die Terminsuche wurde geschlossen.", ephemeral: true });
-}
-
+// Export default object for compatibility
 export default {
   createEvent,
   inviteParticipant,
@@ -1035,5 +1452,3 @@ export default {
   loadEvents,
   saveEvents
 };
-
-export { loadEvents, saveEvents };

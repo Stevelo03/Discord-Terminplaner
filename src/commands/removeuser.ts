@@ -1,6 +1,25 @@
+// src/commands/removeuser.ts
 import { SlashCommandBuilder } from 'discord.js';
 import { ChatInputCommandInteraction, TextChannel, PermissionFlagsBits } from 'discord.js';
-import terminManager, { loadEvents, saveEvents } from '../terminManager';
+import { db } from '../db';
+import { events, participants, serverUsers, eventAuditLogs } from '../db/schema';
+import { eq, and, inArray } from 'drizzle-orm';
+import { updateEventMessage } from '../terminManager';
+
+// Helper function to create audit log
+async function createAuditLog(eventId: string, action: string, performedBy: string, details?: any): Promise<void> {
+  try {
+    await db.insert(eventAuditLogs).values({
+      eventId: eventId,
+      action: action as any,
+      performedBy: performedBy,
+      performedAt: new Date(),
+      details: details ? JSON.stringify(details) : null
+    });
+  } catch (error) {
+    console.error('Error creating audit log:', error);
+  }
+}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -19,7 +38,7 @@ module.exports = {
     try {
       // Überprüfen, ob der Nutzer Administrator ist
       if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
-        await interaction.reply({ content: "Du hast keine Berechtigung, diesen Befehl zu nutzen.", ephemeral: true });
+        await interaction.reply({ content: "❌ **Keine Berechtigung**\n\nDu benötigst Administrator-Rechte für diesen Befehl.", ephemeral: true });
         return;
       }
       
@@ -28,28 +47,76 @@ module.exports = {
       
       await interaction.deferReply({ ephemeral: true });
       
-      // Event laden
-      const events = loadEvents();
-      const eventIndex = events.findIndex(e => e.id === eventId);
-      
-      if (eventIndex === -1) {
-        await interaction.editReply({ content: `Kein Event mit der ID ${eventId} gefunden.` });
+      // Validate input
+      if (!eventId.trim()) {
+        await interaction.editReply({ content: "❌ **Event ID erforderlich**\n\nBitte gib eine gültige Event-ID an." });
         return;
       }
       
-      const event = events[eventIndex];
-      
-      // Prüfen, ob das Event noch aktiv ist
-      if (event.status !== 'active') {
-        await interaction.editReply({ 
-          content: `Diese Terminsuche hat den Status "${event.status}". Du kannst nur aktive Terminsuchen bearbeiten.`
-        });
+      if (!participantsString.trim()) {
+        await interaction.editReply({ content: "❌ **Teilnehmer erforderlich**\n\nBitte erwähne mindestens einen Benutzer oder eine Rolle zum Entfernen." });
         return;
       }
       
       // Überprüfen, ob die Interaktion in einem Server stattfindet
       if (!interaction.guild) {
-        await interaction.editReply({ content: "Dieser Befehl kann nur auf einem Server ausgeführt werden." });
+        await interaction.editReply({ content: "❌ **Server erforderlich**\n\nDieser Befehl kann nur auf einem Server ausgeführt werden." });
+        return;
+      }
+      
+      // Event aus Database laden
+      const eventData = await db.select()
+        .from(events)
+        .where(eq(events.id, eventId))
+        .limit(1);
+      
+      if (eventData.length === 0) {
+        await interaction.editReply({ 
+          content: `❌ **Event nicht gefunden**\n\nKein Event mit der ID \`${eventId}\` gefunden.\n\n💡 **Tipp:** Die Event-ID findest du im Footer der Event-Nachricht.` 
+        });
+        return;
+      }
+      
+      const event = eventData[0];
+      
+      // Prüfen, ob das Event noch aktiv ist
+      if (event.status !== 'ACTIVE') {
+        const statusText = event.status === 'CLOSED' ? 'geschlossen' : 'abgebrochen';
+        let message = `❌ **Event ${statusText}**\n\nDiese Terminsuche wurde ${statusText}. Du kannst nur aktive Terminsuchen bearbeiten.`;
+        
+        if (event.status === 'CANCELLED' && event.cancellationReason) {
+          message += `\n\n**Abbruchgrund:** ${event.cancellationReason}`;
+        }
+        
+        await interaction.editReply({ content: message });
+        return;
+      }
+      
+      // Prüfen, ob Event zu diesem Server gehört
+      if (event.serverId !== interaction.guild.id) {
+        await interaction.editReply({ 
+          content: `❌ **Event gehört nicht zu diesem Server**\n\nDas Event \`${eventId}\` wurde auf einem anderen Server erstellt.` 
+        });
+        return;
+      }
+      
+      // Progress update
+      await interaction.editReply({ 
+        content: `🔄 **Verarbeite zu entfernende Teilnehmer...**\n\n📝 **Event:** ${event.title}\n📅 **Datum:** ${event.date} um ${event.time} Uhr\n\n⏳ Analysiere Benutzer und Rollen...` 
+      });
+      
+      // Aktuelle Teilnehmer aus Database laden
+      const currentParticipants = await db.query.participants.findMany({
+        where: eq(participants.eventId, eventId),
+        with: {
+          serverUser: true
+        }
+      });
+      
+      if (currentParticipants.length === 0) {
+        await interaction.editReply({ 
+          content: `ℹ️ **Keine Teilnehmer vorhanden**\n\nDieses Event hat aktuell keine Teilnehmer.\n\n💡 **Tipp:** Verwende \`/adduser\` um Teilnehmer hinzuzufügen.` 
+        });
         return;
       }
       
@@ -67,118 +134,207 @@ module.exports = {
       
       // Verarbeite alle Rollen und sammle deren Mitglieder
       if (roleIds.length > 0) {
-        console.log(`Verarbeite ${roleIds.length} Rollen für die Entfernung...`);
+        console.log(`Processing ${roleIds.length} roles for removal...`);
         
-        // Hole alle Mitglieder der Guild
-        await interaction.guild.members.fetch();
-        
-        for (const roleId of roleIds) {
-          try {
-            const role = await interaction.guild.roles.fetch(roleId);
-            if (!role) {
-              console.log(`Rolle mit ID ${roleId} nicht gefunden`);
-              continue;
-            }
-            
-            processedRoleNames.push(role.name);
-            console.log(`Verarbeite Rolle: ${role.name} mit ${role.members.size} Mitgliedern`);
-            
-            // Verarbeite alle Mitglieder der Rolle
-            for (const [memberId, member] of role.members) {
-              console.log(`Prüfe Mitglied für Entfernung: ${member.user.username}`);
-              
-              // Überspringe, wenn Benutzer bereits in der Liste ist
-              if (userIds.includes(memberId) || userIdsFromRoles.includes(memberId)) {
-                console.log(`- Benutzer ${member.user.username} bereits in der Entfernungsliste`);
+        try {
+          // Hole alle Mitglieder der Guild
+          await interaction.guild.members.fetch();
+          
+          for (const roleId of roleIds) {
+            try {
+              const role = await interaction.guild.roles.fetch(roleId);
+              if (!role) {
+                console.log(`Role with ID ${roleId} not found`);
+                await interaction.followUp({ 
+                  content: `⚠️ **Warnung:** Rolle mit ID \`${roleId}\` nicht gefunden.`, 
+                  ephemeral: true 
+                });
                 continue;
               }
               
-              console.log(`- Benutzer ${member.user.username} wird zur Entfernungsliste hinzugefügt`);
-              userIdsFromRoles.push(memberId);
+              processedRoleNames.push(role.name);
+              console.log(`Processing role for removal: ${role.name} with ${role.members.size} members`);
+              
+              // Verarbeite alle Mitglieder der Rolle
+              for (const [memberId, member] of role.members) {
+                console.log(`Checking member for removal: ${member.user.username}`);
+                
+                // Überspringe, wenn Benutzer bereits in der Liste ist
+                if (userIds.includes(memberId) || userIdsFromRoles.includes(memberId)) {
+                  console.log(`- User ${member.user.username} already in removal list`);
+                  continue;
+                }
+                
+                // Prüfe, ob der Benutzer überhaupt Teilnehmer ist
+                const isParticipant = currentParticipants.some(p => p.serverUser.userId === memberId);
+                if (isParticipant) {
+                  console.log(`- User ${member.user.username} will be added to removal list`);
+                  userIdsFromRoles.push(memberId);
+                } else {
+                  console.log(`- User ${member.user.username} is not a participant`);
+                }
+              }
+            } catch (error) {
+              console.error(`Error processing role ${roleId} for removal:`, error);
+              await interaction.followUp({ 
+                content: `⚠️ **Warnung:** Fehler beim Verarbeiten der Rolle mit ID \`${roleId}\`.`, 
+                ephemeral: true 
+              });
             }
-          } catch (error) {
-            console.error(`Fehler beim Verarbeiten der Rolle ${roleId} für die Entfernung:`, error);
           }
+        } catch (error) {
+          console.error('Error fetching guild members for removal:', error);
+          await interaction.editReply({ 
+            content: "❌ **Fehler beim Laden der Servermitglieder**\n\nBitte versuche es später erneut." 
+          });
+          return;
         }
       }
       
       // Alle Benutzer-IDs kombinieren (ohne Duplikate)
       const allUserIds = [...new Set([...userIds, ...userIdsFromRoles])];
-      console.log(`Gesamtzahl der zu entfernenden Benutzer: ${allUserIds.length}`);
+      console.log(`Total users to remove: ${allUserIds.length}`);
       
       if (allUserIds.length === 0) {
-        await interaction.editReply({ content: "Bitte gib mindestens einen gültigen Teilnehmer oder eine Rolle an." });
+        await interaction.editReply({ 
+          content: "❌ **Keine gültigen Teilnehmer zum Entfernen**\n\nBitte erwähne mindestens einen gültigen Benutzer oder eine Rolle.\n\n💡 **Beispiel:** `@Nutzer1 @TeamRolle`" 
+        });
         return;
       }
       
-      // Sammle Informationen über entfernte Benutzer
-      let removedCount = 0;
-      const removedUsernames: string[] = [];
+      // Progress update
+      await interaction.editReply({ 
+        content: `🔄 **Prüfe zu entfernende Teilnehmer...**\n\n📝 **Event:** ${event.title}\n👥 **Zu prüfen:** ${allUserIds.length} Benutzer${processedRoleNames.length > 0 ? `\n🏷️ **Rollen:** ${processedRoleNames.join(', ')}` : ''}\n📊 **Aktuelle Teilnehmer:** ${currentParticipants.length}\n\n⏳ Filtere tatsächliche Teilnehmer...` 
+        });
       
-      // Teilnehmer entfernen
-      const originalParticipantsLength = event.participants.length;
-      event.participants = event.participants.filter(p => {
-        // Wenn der Teilnehmer in der Entfernungsliste ist
-        if (allUserIds.includes(p.userId)) {
-          try {
-            // Versuche den Benutzernamen zu speichern
-            const username = p.username || `ID:${p.userId}`;
-            removedUsernames.push(username);
-            return false; // Entfernen
-          } catch {
-            return false; // Bei Fehler trotzdem entfernen
-          }
-        }
-        return true; // Behalten, wenn nicht in der Liste zum Entfernen
+      // Finde Teilnehmer, die tatsächlich entfernt werden können
+      const participantsToRemove = currentParticipants.filter(participant => 
+        allUserIds.includes(participant.serverUser.userId)
+      );
+      
+      if (participantsToRemove.length === 0) {
+        const currentUsernames = currentParticipants.map(p => p.serverUser.username).join(', ');
+        await interaction.editReply({ 
+          content: `ℹ️ **Keine zu entfernenden Teilnehmer**\n\nKeiner der angegebenen Benutzer ist Teil dieser Terminsuche.\n\n👥 **Aktuelle Teilnehmer:** ${currentUsernames}\n\n💡 **Tipp:** Prüfe die Teilnehmerliste in der Event-Nachricht.` 
+        });
+        return;
+      }
+      
+      // Progress update
+      await interaction.editReply({ 
+        content: `✅ **Beginne Entfernung...**\n\n📝 **Event:** ${event.title}\n👥 **Zu entfernen:** ${participantsToRemove.length} von ${currentParticipants.length} Teilnehmern\n\n⏳ Entferne Teilnehmer aus der Datenbank...` 
       });
       
-      // Anzahl der entfernten Teilnehmer berechnen
-      removedCount = originalParticipantsLength - event.participants.length;
+      // Sammle Informationen über entfernte Benutzer für Logging
+      const removedUserInfo = participantsToRemove.map(p => ({
+        participantId: p.id,
+        userId: p.serverUser.userId,
+        username: p.serverUser.username,
+        status: p.currentStatus
+      }));
       
-      if (removedCount === 0) {
-        await interaction.editReply({ content: "Keiner der angegebenen Teilnehmer ist Teil dieser Terminsuche." });
+      // Entferne Teilnehmer aus Database
+      const participantIdsToRemove = participantsToRemove.map(p => p.id);
+      
+      try {
+        // Database transaction für atomare Operation
+        await db.delete(participants)
+          .where(inArray(participants.id, participantIdsToRemove));
+        
+        console.log(`✅ Successfully removed ${participantsToRemove.length} participants from database`);
+        
+        // Create audit log
+        await createAuditLog(eventId, 'PARTICIPANT_REMOVED', interaction.user.id, {
+          removedCount: participantsToRemove.length,
+          removedUsers: removedUserInfo,
+          performedBy: interaction.user.username,
+          roleNames: processedRoleNames
+        });
+        
+        // Update event message
+        await updateEventMessage(eventId);
+        
+      } catch (dbError) {
+        console.error('Database error during participant removal:', dbError);
+        await interaction.editReply({ 
+          content: `❌ **Datenbank-Fehler**\n\nFehler beim Entfernen der Teilnehmer aus der Datenbank.\n\n**Fehler:** ${dbError instanceof Error ? dbError.message : 'Unbekannter Datenbankfehler'}\n\n💡 **Lösungsvorschlag:** Versuche es später erneut.` 
+        });
         return;
       }
-      
-      // Aktualisiertes Event speichern
-      events[eventIndex] = event;
-      saveEvents(events);
       
       // Erstelle Zusammenfassung über entfernte Rollen
       let rolesSummary = "";
       if (processedRoleNames.length > 0) {
-        rolesSummary = `\nEntfernte Rollen: ${processedRoleNames.join(', ')}`;
+        rolesSummary = `\n🏷️ **Verarbeitete Rollen:** ${processedRoleNames.join(', ')}`;
       }
       
-      // Erstelle Zusammenfassung über entfernte Benutzer
+      // Erstelle detaillierte Benutzer-Zusammenfassung
       let usersSummary = "";
-      if (removedUsernames.length > 0 && removedUsernames.length <= 10) {
-        usersSummary = `\nEntfernte Benutzer: ${removedUsernames.join(', ')}`;
-      } else if (removedUsernames.length > 10) {
-        // Wenn zu viele Benutzer entfernt wurden, zeige nur die ersten 10
-        usersSummary = `\nEntfernte Benutzer: ${removedUsernames.slice(0, 10).join(', ')} und ${removedUsernames.length - 10} weitere`;
+      if (removedUserInfo.length > 0) {
+        if (removedUserInfo.length <= 10) {
+          usersSummary = `\n\n👥 **Entfernte Teilnehmer:**\n${removedUserInfo.map(user => {
+            const statusEmoji = {
+              'PENDING': '⏳',
+              'ACCEPTED': '✅',
+              'ACCEPTED_WITH_RESERVATION': '☑️',
+              'ACCEPTED_WITHOUT_TIME': '⏱️',
+              'OTHER_TIME': '🕒',
+              'DECLINED': '❌'
+            };
+            return `• ${user.username} (${statusEmoji[user.status as keyof typeof statusEmoji] || '❓'} ${user.status})`;
+          }).join('\n')}`;
+        } else {
+          usersSummary = `\n\n👥 **Entfernte Teilnehmer:** ${removedUserInfo.length} (siehe Logs für Details)`;
+        }
       }
       
-      await interaction.editReply(
-        `Teilnehmer aus der Terminsuche "${event.title}" entfernt!\n` +
-        `✅ ${removedCount} Teilnehmer erfolgreich entfernt.` +
-        rolesSummary +
-        usersSummary
-      );
+      // Berechne Statistiken
+      const remainingParticipants = currentParticipants.length - participantsToRemove.length;
+      const notFoundCount = allUserIds.length - participantsToRemove.length;
       
-      // Aktualisiere die Event-Nachricht im Server
-      await terminManager.updateEventMessage(eventId);
+      // Warnings für nicht gefundene Benutzer
+      let warningsSummary = "";
+      if (notFoundCount > 0) {
+        warningsSummary = `\n\n💡 **Hinweise:**`;
+        warningsSummary += `\n• ${notFoundCount} der angegebenen Benutzer waren nicht Teil des Events`;
+      }
+      
+      // Final success message
+      const finalMessage = `🎉 **Teilnehmer erfolgreich entfernt!**
+
+📝 **Event:** ${event.title}
+📅 **Datum:** ${event.date} um ${event.time} Uhr
+🆔 **Event ID:** ${eventId}
+
+📊 **Entfernungs-Statistik:**
+✅ ${participantsToRemove.length} Teilnehmer erfolgreich entfernt
+📉 **Teilnehmer gesamt:** ${remainingParticipants} (vorher: ${currentParticipants.length})${rolesSummary}${usersSummary}${warningsSummary}
+
+🔔 **Nächste Schritte:**
+• Event-Nachricht wurde automatisch aktualisiert
+• Entfernte Teilnehmer können nicht mehr auf das Event antworten
+• Die Teilnehmerliste zeigt nur noch verbleibende Personen
+
+💡 **Tipp:** Mit \`/adduser eventid:${eventId}\` können neue Teilnehmer hinzugefügt werden.`;
+
+      await interaction.editReply({ content: finalMessage });
+      
+      console.log(`✅ RemoveUser completed: ${eventId} | Removed: ${participantsToRemove.length} | Remaining: ${remainingParticipants}`);
+      
     } catch (mainError) {
-      console.error("Unerwarteter Fehler im removeuser-Befehl:", mainError);
+      console.error("Critical error in removeuser command:", mainError);
       
       try {
+        const errorMessage = mainError instanceof Error ? mainError.message : 'Unbekannter Fehler';
+        const response = `❌ **Kritischer Fehler aufgetreten**\n\n\`\`\`${errorMessage}\`\`\`\n\n🔧 **Hilfe:**\n• Prüfe die Event-ID\n• Stelle sicher, dass das Event aktiv ist\n• Stelle sicher, dass die Benutzer Teilnehmer sind\n• Versuche es später erneut\n• Kontaktiere den Support falls das Problem bestehen bleibt`;
+        
         if (interaction.deferred) {
-          await interaction.editReply({ content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut." });
+          await interaction.editReply({ content: response });
         } else {
-          await interaction.reply({ content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.", ephemeral: true });
+          await interaction.reply({ content: response, ephemeral: true });
         }
       } catch (e) {
-        console.error("Fehler bei der Fehlermeldung:", e);
+        console.error("Error sending error message:", e);
       }
     }
   },

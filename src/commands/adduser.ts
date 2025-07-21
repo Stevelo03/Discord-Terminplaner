@@ -1,6 +1,10 @@
+// src/commands/adduser.ts
 import { SlashCommandBuilder } from 'discord.js';
 import { ChatInputCommandInteraction, TextChannel, PermissionFlagsBits } from 'discord.js';
-import terminManager, { loadEvents, saveEvents } from '../terminManager';
+import { db } from '../db';
+import { events, participants, serverUsers } from '../db/schema';
+import { eq, and } from 'drizzle-orm';
+import { inviteParticipant, updateEventMessage } from '../terminManager';
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -19,7 +23,7 @@ module.exports = {
     try {
       // Überprüfen, ob der Nutzer Administrator ist
       if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
-        await interaction.reply({ content: "Du hast keine Berechtigung, diesen Befehl zu nutzen.", ephemeral: true });
+        await interaction.reply({ content: "❌ **Keine Berechtigung**\n\nDu benötigst Administrator-Rechte für diesen Befehl.", ephemeral: true });
         return;
       }
       
@@ -28,30 +32,63 @@ module.exports = {
       
       await interaction.deferReply({ ephemeral: true });
       
-      // Event laden
-      const events = loadEvents();
-      const eventIndex = events.findIndex(e => e.id === eventId);
-      
-      if (eventIndex === -1) {
-        await interaction.editReply({ content: `Kein Event mit der ID ${eventId} gefunden.` });
+      // Validate input
+      if (!eventId.trim()) {
+        await interaction.editReply({ content: "❌ **Event ID erforderlich**\n\nBitte gib eine gültige Event-ID an." });
         return;
       }
       
-      const event = events[eventIndex];
-      
-      // Prüfen, ob das Event noch aktiv ist
-      if (event.status !== 'active') {
-        await interaction.editReply({ 
-          content: `Diese Terminsuche hat den Status "${event.status}". Du kannst nur aktive Terminsuchen bearbeiten.`
-        });
+      if (!participantsString.trim()) {
+        await interaction.editReply({ content: "❌ **Teilnehmer erforderlich**\n\nBitte erwähne mindestens einen Benutzer oder eine Rolle." });
         return;
       }
       
       // Überprüfen, ob die Interaktion in einem Server stattfindet
       if (!interaction.guild) {
-        await interaction.editReply({ content: "Dieser Befehl kann nur auf einem Server ausgeführt werden." });
+        await interaction.editReply({ content: "❌ **Server erforderlich**\n\nDieser Befehl kann nur auf einem Server ausgeführt werden." });
         return;
       }
+      
+      // Event aus Database laden
+      const eventData = await db.select()
+        .from(events)
+        .where(eq(events.id, eventId))
+        .limit(1);
+      
+      if (eventData.length === 0) {
+        await interaction.editReply({ 
+          content: `❌ **Event nicht gefunden**\n\nKein Event mit der ID \`${eventId}\` gefunden.\n\n💡 **Tipp:** Die Event-ID findest du im Footer der Event-Nachricht.` 
+        });
+        return;
+      }
+      
+      const event = eventData[0];
+      
+      // Prüfen, ob das Event noch aktiv ist
+      if (event.status !== 'ACTIVE') {
+        const statusText = event.status === 'CLOSED' ? 'geschlossen' : 'abgebrochen';
+        let message = `❌ **Event ${statusText}**\n\nDiese Terminsuche wurde ${statusText}. Du kannst nur aktive Terminsuchen bearbeiten.`;
+        
+        if (event.status === 'CANCELLED' && event.cancellationReason) {
+          message += `\n\n**Abbruchgrund:** ${event.cancellationReason}`;
+        }
+        
+        await interaction.editReply({ content: message });
+        return;
+      }
+      
+      // Prüfen, ob Event zu diesem Server gehört
+      if (event.serverId !== interaction.guild.id) {
+        await interaction.editReply({ 
+          content: `❌ **Event gehört nicht zu diesem Server**\n\nDas Event \`${eventId}\` wurde auf einem anderen Server erstellt.` 
+        });
+        return;
+      }
+      
+      // Progress update
+      await interaction.editReply({ 
+        content: `🔄 **Verarbeite Teilnehmer...**\n\n📝 **Event:** ${event.title}\n📅 **Datum:** ${event.date} um ${event.time} Uhr\n\n⏳ Analysiere Benutzer und Rollen...` 
+      });
       
       // Teilnehmer-IDs und Rollen-IDs extrahieren
       const userMatches = participantsString.match(/<@!?(\d+)>/g) || [];
@@ -67,137 +104,277 @@ module.exports = {
       
       // Verarbeite alle Rollen und sammle deren Mitglieder
       if (roleIds.length > 0) {
-        console.log(`Verarbeite ${roleIds.length} Rollen...`);
+        console.log(`Processing ${roleIds.length} roles for adduser...`);
         
-        // Hole alle Mitglieder der Guild
-        await interaction.guild.members.fetch();
-        
-        for (const roleId of roleIds) {
-          try {
-            const role = await interaction.guild.roles.fetch(roleId);
-            if (!role) {
-              console.log(`Rolle mit ID ${roleId} nicht gefunden`);
-              continue;
-            }
-            
-            processedRoleNames.push(role.name);
-            console.log(`Verarbeite Rolle: ${role.name} mit ${role.members.size} Mitgliedern`);
-            
-            // Channel für Berechtigungsprüfung
-            const channel = await interaction.guild.channels.fetch(event.channelId) as TextChannel;
-            
-            // Verarbeite alle Mitglieder der Rolle
-            for (const [memberId, member] of role.members) {
-              console.log(`Prüfe Mitglied: ${member.user.username}`);
-              
-              // Überspringe, wenn Benutzer bereits in der Liste ist
-              if (userIds.includes(memberId) || userIdsFromRoles.includes(memberId)) {
-                console.log(`- Benutzer ${member.user.username} bereits in der Liste`);
+        try {
+          // Hole alle Mitglieder der Guild
+          await interaction.guild.members.fetch();
+          
+          for (const roleId of roleIds) {
+            try {
+              const role = await interaction.guild.roles.fetch(roleId);
+              if (!role) {
+                console.log(`Role with ID ${roleId} not found`);
+                await interaction.followUp({ 
+                  content: `⚠️ **Warnung:** Rolle mit ID \`${roleId}\` nicht gefunden.`, 
+                  ephemeral: true 
+                });
                 continue;
               }
               
-              // Prüfe, ob das Mitglied den Channel sehen kann
-              if (channel.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel)) {
-                console.log(`- Benutzer ${member.user.username} hat Sichtbarkeit und wird hinzugefügt`);
-                userIdsFromRoles.push(memberId);
-              } else {
-                console.log(`- Benutzer ${member.user.username} hat keine Sichtbarkeit`);
+              processedRoleNames.push(role.name);
+              console.log(`Processing role: ${role.name} with ${role.members.size} members`);
+              
+              // Channel für Berechtigungsprüfung
+              const channel = await interaction.guild.channels.fetch(event.channelId) as TextChannel;
+              
+              if (!channel) {
+                console.warn(`Channel ${event.channelId} not found for permission check`);
+                continue;
               }
+              
+              // Verarbeite alle Mitglieder der Rolle
+              for (const [memberId, member] of role.members) {
+                console.log(`Checking member: ${member.user.username}`);
+                
+                // Skip bots
+                if (member.user.bot) {
+                  console.log(`- Skipping bot: ${member.user.username}`);
+                  continue;
+                }
+                
+                // Überspringe, wenn Benutzer bereits in der Liste ist
+                if (userIds.includes(memberId) || userIdsFromRoles.includes(memberId)) {
+                  console.log(`- User ${member.user.username} already in list`);
+                  continue;
+                }
+                
+                // Prüfe, ob das Mitglied den Channel sehen kann
+                if (channel.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel)) {
+                  console.log(`- User ${member.user.username} has visibility and will be added`);
+                  userIdsFromRoles.push(memberId);
+                } else {
+                  console.log(`- User ${member.user.username} cannot see this channel`);
+                }
+              }
+            } catch (error) {
+              console.error(`Error processing role ${roleId}:`, error);
+              await interaction.followUp({ 
+                content: `⚠️ **Warnung:** Fehler beim Verarbeiten der Rolle mit ID \`${roleId}\`.`, 
+                ephemeral: true 
+              });
             }
-          } catch (error) {
-            console.error(`Fehler beim Verarbeiten der Rolle ${roleId}:`, error);
           }
+        } catch (error) {
+          console.error('Error fetching guild members:', error);
+          await interaction.editReply({ 
+            content: "❌ **Fehler beim Laden der Servermitglieder**\n\nBitte versuche es später erneut." 
+          });
+          return;
         }
       }
       
       // Alle Benutzer-IDs kombinieren (ohne Duplikate)
       const allUserIds = [...new Set([...userIds, ...userIdsFromRoles])];
-      console.log(`Gesamtzahl der einzuladenden Benutzer: ${allUserIds.length}`);
+      console.log(`Total users to add: ${allUserIds.length}`);
       
       if (allUserIds.length === 0) {
-        await interaction.editReply({ content: "Bitte gib mindestens einen gültigen Teilnehmer oder eine Rolle an." });
+        await interaction.editReply({ 
+          content: "❌ **Keine gültigen Teilnehmer**\n\nBitte erwähne mindestens einen gültigen Benutzer oder eine Rolle.\n\n💡 **Beispiel:** `@Nutzer1 @TeamRolle`" 
+        });
         return;
       }
       
-      // Bereits vorhandene Teilnehmer filtern
-      const existingUserIds = event.participants.map(p => p.userId);
+      // Progress update
+      await interaction.editReply({ 
+        content: `🔄 **Prüfe bestehende Teilnehmer...**\n\n📝 **Event:** ${event.title}\n👥 **Gefunden:** ${allUserIds.length} Benutzer${processedRoleNames.length > 0 ? `\n🏷️ **Rollen:** ${processedRoleNames.join(', ')}` : ''}\n\n⏳ Filtere bereits eingeladene Benutzer...` 
+      });
+      
+      // Bereits vorhandene Teilnehmer aus Database laden
+      const existingParticipants = await db.query.participants.findMany({
+        where: eq(participants.eventId, eventId),
+        with: {
+          serverUser: true
+        }
+      });
+      
+      const existingUserIds = existingParticipants.map(p => p.serverUser.userId);
       const newUserIds = allUserIds.filter(id => !existingUserIds.includes(id));
       
       if (newUserIds.length === 0) {
-        await interaction.editReply({ content: "Alle angegebenen Teilnehmer sind bereits Teil dieser Terminsuche." });
+        const existingCount = allUserIds.length;
+        await interaction.editReply({ 
+          content: `ℹ️ **Alle Benutzer bereits eingeladen**\n\nAlle ${existingCount} angegebenen Teilnehmer sind bereits Teil dieser Terminsuche.\n\n📊 **Bestehende Teilnehmer:** ${existingParticipants.length}\n💡 **Tipp:** Verwende \`/removeuser\` um Teilnehmer zu entfernen.` 
+        });
         return;
       }
+      
+      // Validate new participants
+      let validNewUserIds: string[] = [];
+      let invalidUsers = 0;
+      let botUsers = 0;
+      
+      for (const userId of newUserIds) {
+        try {
+          const member = await interaction.guild.members.fetch(userId);
+          if (member.user.bot) {
+            botUsers++;
+            console.log(`Skipping bot user: ${member.user.username}`);
+            continue;
+          }
+          validNewUserIds.push(userId);
+        } catch (error) {
+          invalidUsers++;
+          console.warn(`User ${userId} not found in guild`);
+        }
+      }
+      
+      if (validNewUserIds.length === 0) {
+        await interaction.editReply({ 
+          content: `❌ **Keine neuen gültigen Teilnehmer**\n\nAlle neuen Benutzer sind entweder Bots oder nicht auf diesem Server.\n\n🤖 **Bots:** ${botUsers}\n❓ **Nicht gefunden:** ${invalidUsers}\n📊 **Bereits eingeladen:** ${existingUserIds.length}` 
+        });
+        return;
+      }
+      
+      // Check participant limit
+      const totalAfterAdd = existingParticipants.length + validNewUserIds.length;
+      if (totalAfterAdd > 50) {
+        await interaction.editReply({ 
+          content: `❌ **Teilnehmer-Limit erreicht**\n\nMaximal 50 Teilnehmer pro Event erlaubt.\n\n📊 **Aktuell:** ${existingParticipants.length}\n➕ **Hinzufügen:** ${validNewUserIds.length}\n🔢 **Gesamt:** ${totalAfterAdd} (Limit: 50)\n\n💡 **Tipp:** Entferne erst einige Teilnehmer mit \`/removeuser\`.` 
+        });
+        return;
+      }
+      
+      // Progress update
+      await interaction.editReply({ 
+        content: `✅ **Beginne Einladungen...**\n\n📝 **Event:** ${event.title}\n👥 **Neue Teilnehmer:** ${validNewUserIds.length}\n📊 **Gesamt nach Hinzufügung:** ${totalAfterAdd}\n\n⏳ Sende Einladungen...` 
+      });
       
       // Teilnehmer einladen
       let successCount = 0;
       let failCount = 0;
       let failedUsernames: string[] = [];
       
-      for (const userId of newUserIds) {
-        try {
-          const user = await interaction.client.users.fetch(userId);
-          // ÄNDERUNG: Fange den Rückgabewert auf
-          const success = await terminManager.inviteParticipant(
-            eventId, 
-            user, 
-            event.title, 
-            event.date, 
-            event.time, 
-            event.relativeDate, 
-            event.comment
-          );
-          
-          if (success) {
-            successCount++;
-          } else {
-            failCount++;
-            failedUsernames.push(user.username);
-          }
-        } catch (error) {
-          console.error(`Fehler beim Einladen von Benutzer ${userId}:`, error);
-          failCount++;
-          
+      // Batch processing für bessere Performance
+      const batchSize = 5;
+      for (let i = 0; i < validNewUserIds.length; i += batchSize) {
+        const batch = validNewUserIds.slice(i, i + batchSize);
+        
+        const batchPromises = batch.map(async (userId) => {
           try {
             const user = await interaction.client.users.fetch(userId);
-            failedUsernames.push(user.username);
-          } catch {
-            failedUsernames.push(`ID:${userId}`);
+            const success = await inviteParticipant(
+              eventId, 
+              user, 
+              event.title, 
+              event.date, 
+              event.time, 
+              event.relativeDate, 
+              event.comment
+            );
+            
+            if (success) {
+              successCount++;
+              console.log(`✅ Successfully added: ${user.username}`);
+            } else {
+              failCount++;
+              failedUsernames.push(user.username);
+              console.log(`❌ Failed to add: ${user.username}`);
+            }
+          } catch (error) {
+            console.error(`Error adding user ${userId}:`, error);
+            failCount++;
+            
+            try {
+              const user = await interaction.client.users.fetch(userId);
+              failedUsernames.push(user.username);
+            } catch {
+              failedUsernames.push(`ID:${userId}`);
+            }
           }
+        });
+        
+        await Promise.all(batchPromises);
+        
+        // Progress update for larger batches
+        if (validNewUserIds.length > 10 && i + batchSize < validNewUserIds.length) {
+          const progress = Math.round(((i + batchSize) / validNewUserIds.length) * 100);
+          await interaction.editReply({ 
+            content: `✅ **Einladungen laufen...**\n\n📝 **Event:** ${event.title}\n👥 **Fortschritt:** ${i + batchSize}/${validNewUserIds.length} (${progress}%)\n\n⏳ Wird fortgesetzt...` 
+          });
         }
       }
       
       // Erstelle Zusammenfassung über eingeladene Rollen
       let rolesSummary = "";
       if (processedRoleNames.length > 0) {
-        rolesSummary = `\nEingeladene Rollen: ${processedRoleNames.join(', ')}`;
+        rolesSummary = `\n🏷️ **Verarbeitete Rollen:** ${processedRoleNames.join(', ')}`;
       }
       
       // Erstelle Zusammenfassung über fehlgeschlagene Einladungen
       let failedSummary = "";
       if (failedUsernames.length > 0) {
-        failedSummary = `\nFehlgeschlagene Einladungen: ${failedUsernames.join(', ')}`;
+        if (failedUsernames.length <= 10) {
+          failedSummary = `\n\n⚠️ **Fehlgeschlagene Einladungen:**\n${failedUsernames.map(name => `• ${name}`).join('\n')}`;
+        } else {
+          failedSummary = `\n\n⚠️ **Fehlgeschlagene Einladungen:** ${failedUsernames.length} (siehe Logs für Details)`;
+        }
       }
       
-      await interaction.editReply(
-        `Teilnehmer zur Terminsuche "${event.title}" hinzugefügt!\n` +
-        `✅ ${successCount} neue Teilnehmer erfolgreich eingeladen.\n` +
-        (failCount > 0 ? `❌ ${failCount} Einladungen konnten nicht gesendet werden.${failedSummary}` : '') +
-        rolesSummary
-      );
+      // Warnings für gefilterte Benutzer
+      let warningsSummary = "";
+      if (botUsers > 0 || invalidUsers > 0 || (allUserIds.length - newUserIds.length) > 0) {
+        warningsSummary = `\n\n💡 **Hinweise:**`;
+        if (botUsers > 0) {
+          warningsSummary += `\n• ${botUsers} Bots wurden übersprungen`;
+        }
+        if (invalidUsers > 0) {
+          warningsSummary += `\n• ${invalidUsers} Benutzer nicht auf diesem Server gefunden`;
+        }
+        const alreadyInvited = allUserIds.length - newUserIds.length;
+        if (alreadyInvited > 0) {
+          warningsSummary += `\n• ${alreadyInvited} Benutzer waren bereits eingeladen`;
+        }
+      }
       
-      // Aktualisiere die Event-Nachricht im Server
-      await terminManager.updateEventMessage(eventId);
+      // Final success message
+      const newTotal = existingParticipants.length + successCount;
+      const finalMessage = `🎉 **Teilnehmer erfolgreich hinzugefügt!**
+
+📝 **Event:** ${event.title}
+📅 **Datum:** ${event.date} um ${event.time} Uhr
+🆔 **Event ID:** ${eventId}
+
+📊 **Hinzufügungs-Statistik:**
+✅ ${successCount} neue Teilnehmer erfolgreich hinzugefügt
+${failCount > 0 ? `❌ ${failCount} Einladungen fehlgeschlagen` : '✨ Alle Einladungen erfolgreich!'}
+📈 **Teilnehmer gesamt:** ${newTotal} (vorher: ${existingParticipants.length})${rolesSummary}${failedSummary}${warningsSummary}
+
+🔔 **Nächste Schritte:**
+• Neue Teilnehmer erhalten DMs mit Antwortmöglichkeiten
+• Status wird automatisch im Channel aktualisiert
+• Event-Nachricht zeigt die neuen Teilnehmer an
+
+💡 **Tipp:** Mit \`/removeuser eventid:${eventId}\` können Teilnehmer wieder entfernt werden.`;
+
+      await interaction.editReply({ content: finalMessage });
+      
+      console.log(`✅ AddUser completed: ${eventId} | Added: ${successCount} | Failed: ${failCount} | Total: ${newTotal}`);
+      
     } catch (mainError) {
-      console.error("Unerwarteter Fehler im adduser-Befehl:", mainError);
+      console.error("Critical error in adduser command:", mainError);
       
       try {
+        const errorMessage = mainError instanceof Error ? mainError.message : 'Unbekannter Fehler';
+        const response = `❌ **Kritischer Fehler aufgetreten**\n\n\`\`\`${errorMessage}\`\`\`\n\n🔧 **Hilfe:**\n• Prüfe die Event-ID\n• Stelle sicher, dass das Event aktiv ist\n• Versuche es später erneut\n• Kontaktiere den Support falls das Problem bestehen bleibt`;
+        
         if (interaction.deferred) {
-          await interaction.editReply({ content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut." });
+          await interaction.editReply({ content: response });
         } else {
-          await interaction.reply({ content: "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es später erneut.", ephemeral: true });
+          await interaction.reply({ content: response, ephemeral: true });
         }
       } catch (e) {
-        console.error("Fehler bei der Fehlermeldung:", e);
+        console.error("Error sending error message:", e);
       }
     }
   },

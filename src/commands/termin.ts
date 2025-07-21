@@ -19,7 +19,7 @@ module.exports = {
         .setRequired(true))
     .addStringOption(option => 
       option.setName('uhrzeit')
-        .setDescription('Uhrzeit des Events (z.B. "20:00")')
+        .setDescription('Uhrzeit des Events (z.B. "20:00" oder "<t:1744819440:t>")')
         .setRequired(true))
     .addStringOption(option => 
       option.setName('teilnehmer')
@@ -36,357 +36,280 @@ module.exports = {
   
   async execute(interaction: ChatInputCommandInteraction) {
     try {
-      // Überprüfen, ob der Nutzer Administrator ist
+      // Admin check
       if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
         await interaction.reply({ content: "Du hast keine Berechtigung, diesen Befehl zu nutzen.", ephemeral: true });
         return;
       }
       
       const title = interaction.options.getString('titel') || '';
-      const date = interaction.options.getString('datum') || '';
-      const time = interaction.options.getString('uhrzeit') || '';
+      const dateInput = interaction.options.getString('datum') || '';
+      const timeInput = interaction.options.getString('uhrzeit') || '';
       const relativeDate = interaction.options.getString('relatives_datum');
       const comment = interaction.options.getString('kommentar');
       const participantsString = interaction.options.getString('teilnehmer') || '';
       
       await interaction.deferReply({ ephemeral: true });
       
-      // Überprüfen, ob die Interaktion in einem Server stattfindet
       if (!interaction.guild) {
         await interaction.editReply({ content: "Dieser Befehl kann nur auf einem Server ausgeführt werden." });
         return;
       }
       
-      // Validate input
+      // Basic validation
       if (!title.trim()) {
-        await interaction.editReply({ content: "❌ **Titel erforderlich**\n\nBitte gib einen gültigen Titel für das Event an." });
+        await interaction.editReply({ content: "❌ Titel erforderlich" });
         return;
       }
       
-      if (!date.trim()) {
-        await interaction.editReply({ content: "❌ **Datum erforderlich**\n\nBitte gib ein gültiges Datum an (z.B. \"25.04.2025\")." });
+      if (!dateInput.trim()) {
+        await interaction.editReply({ content: "❌ Datum erforderlich" });
         return;
       }
       
-      if (!time.trim()) {
-        await interaction.editReply({ content: "❌ **Uhrzeit erforderlich**\n\nBitte gib eine gültige Uhrzeit an (z.B. \"20:00\")." });
+      if (!timeInput.trim()) {
+        await interaction.editReply({ content: "❌ Uhrzeit erforderlich" });
         return;
       }
       
-      // Validate time format
-      const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-      if (!timeRegex.test(time.trim())) {
-        await interaction.editReply({ 
-          content: "❌ **Ungültiges Uhrzeitformat**\n\nBitte verwende das Format HH:MM (z.B. \"20:00\" oder \"14:30\")." 
-        });
-        return;
-      }
+      // Parse Discord timestamps or use normal format
+      let finalDate = dateInput.trim();
+      let finalTime = timeInput.trim();
+      let finalRelativeDate = relativeDate;
       
-      // Validate date format (basic check)
-      const dateRegex = /^\d{1,2}\.\d{1,2}\.\d{4}$/;
-      if (!dateRegex.test(date.trim())) {
-        await interaction.editReply({ 
-          content: "❌ **Ungültiges Datumsformat**\n\nBitte verwende das Format TT.MM.JJJJ (z.B. \"25.04.2025\")." 
-        });
-        return;
-      }
-      
-      // Parse and validate date
-      const [day, month, year] = date.split('.').map(num => parseInt(num));
-      const eventDate = new Date(year, month - 1, day);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      
-      if (eventDate < today) {
-        await interaction.editReply({ 
-          content: "❌ **Datum liegt in der Vergangenheit**\n\nBitte wähle ein Datum in der Zukunft." 
-        });
-        return;
-      }
-      
-      if (year < 2024 || year > 2030) {
-        await interaction.editReply({ 
-          content: "❌ **Ungültiges Jahr**\n\nBitte wähle ein Jahr zwischen 2024 und 2030." 
-        });
-        return;
-      }
-      
-      if (month < 1 || month > 12) {
-        await interaction.editReply({ 
-          content: "❌ **Ungültiger Monat**\n\nBitte wähle einen Monat zwischen 1 und 12." 
-        });
-        return;
-      }
-      
-      if (day < 1 || day > 31) {
-        await interaction.editReply({ 
-          content: "❌ **Ungültiger Tag**\n\nBitte wähle einen Tag zwischen 1 und 31." 
-        });
-        return;
-      }
-      
-      // Title length validation
-      if (title.length > 100) {
-        await interaction.editReply({ 
-          content: "❌ **Titel zu lang**\n\nDer Titel darf maximal 100 Zeichen lang sein." 
-        });
-        return;
-      }
-      
-      // Comment length validation
-      if (comment && comment.length > 500) {
-        await interaction.editReply({ 
-          content: "❌ **Kommentar zu lang**\n\nDer Kommentar darf maximal 500 Zeichen lang sein." 
-        });
-        return;
-      }
-      
-      // Teilnehmer-IDs und Rollen-IDs extrahieren
-      const userMatches = participantsString.match(/<@!?(\d+)>/g) || [];
-      const roleMatches = participantsString.match(/<@&(\d+)>/g) || [];
-      
-      // Direkt erwähnte Benutzer-IDs extrahieren
-      const userIds = userMatches.map((match: string) => match.replace(/<@!?(\d+)>/, '$1'));
-      
-      // Rollen-IDs extrahieren und Benutzer in diesen Rollen sammeln
-      const roleIds = roleMatches.map((match: string) => match.replace(/<@&(\d+)>/, '$1'));
-      const userIdsFromRoles: string[] = [];
-      const processedRoleNames: string[] = [];
-      
-      // Verarbeite alle Rollen und sammle deren Mitglieder
-      if (roleIds.length > 0) {
-        console.log(`Processing ${roleIds.length} roles for event creation...`);
+      // Handle Discord timestamp in date
+      const dateTimestampMatch = dateInput.match(/<t:(\d+):([DdTtRrFf])>/);
+      if (dateTimestampMatch) {
+        const unixTime = parseInt(dateTimestampMatch[1]);
+        const date = new Date(unixTime * 1000);
         
-        try {
-          // Hole alle Mitglieder der Guild
-          await interaction.guild.members.fetch();
-          
-          for (const roleId of roleIds) {
-            try {
-              const role = await interaction.guild.roles.fetch(roleId);
-              if (!role) {
-                console.log(`Role with ID ${roleId} not found`);
-                continue;
-              }
-              
-              processedRoleNames.push(role.name);
-              console.log(`Processing role: ${role.name} with ${role.members.size} members`);
-              
-              // Channel für Berechtigungsprüfung
-              const channel = interaction.channel as TextChannel;
-              
-              // Verarbeite alle Mitglieder der Rolle
-              for (const [memberId, member] of role.members) {
-                console.log(`Checking member: ${member.user.username}`);
-                
-                // Skip bots
-                if (member.user.bot) {
-                  console.log(`- Skipping bot: ${member.user.username}`);
-                  continue;
-                }
-                
-                // Überspringe, wenn Benutzer bereits in der Liste ist
-                if (userIds.includes(memberId) || userIdsFromRoles.includes(memberId)) {
-                  console.log(`- User ${member.user.username} already in list`);
-                  continue;
-                }
-                
-                // Prüfe, ob das Mitglied den Channel sehen kann
-                if (channel.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel)) {
-                  console.log(`- User ${member.user.username} has visibility and will be added`);
-                  userIdsFromRoles.push(memberId);
-                } else {
-                  console.log(`- User ${member.user.username} cannot see this channel`);
-                }
-              }
-            } catch (error) {
-              console.error(`Error processing role ${roleId}:`, error);
-              await interaction.followUp({ 
-                content: `⚠️ **Warnung**: Rolle mit ID ${roleId} konnte nicht verarbeitet werden.`, 
-                ephemeral: true 
-              });
-            }
-          }
-        } catch (error) {
-          console.error('Error fetching guild members:', error);
+        if (isNaN(date.getTime())) {
+          await interaction.editReply({ content: "❌ Ungültiger Discord-Zeitstempel im Datum" });
+          return;
+        }
+        
+        // Convert to German date format
+        const day = date.getDate().toString().padStart(2, '0');
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        const year = date.getFullYear().toString();
+        finalDate = `${day}.${month}.${year}`;
+        
+        // If no relative date given, create one
+        if (!finalRelativeDate) {
+          finalRelativeDate = `<t:${unixTime}:R>`;
+        }
+      } else {
+        // Validate normal date format
+        const dateRegex = /^\d{1,2}\.\d{1,2}\.\d{4}$/;
+        if (!dateRegex.test(finalDate)) {
           await interaction.editReply({ 
-            content: "❌ **Fehler beim Laden der Servermitglieder**\n\nBitte versuche es später erneut." 
+            content: "❌ Ungültiges Datumsformat. Verwende DD.MM.YYYY oder Discord-Zeitstempel <t:TIMESTAMP:D>" 
+          });
+          return;
+        }
+        
+        // Basic date validation
+        const [day, month, year] = finalDate.split('.').map(num => parseInt(num));
+        const eventDate = new Date(year, month - 1, day);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        if (eventDate < today) {
+          await interaction.editReply({ content: "❌ Datum liegt in der Vergangenheit" });
+          return;
+        }
+        
+        if (year < 2024 || year > 2030 || month < 1 || month > 12 || day < 1 || day > 31) {
+          await interaction.editReply({ content: "❌ Ungültiges Datum" });
+          return;
+        }
+      }
+      
+      // Handle Discord timestamp in time
+      const timeTimestampMatch = timeInput.match(/<t:(\d+):([DdTtRrFf])>/);
+      if (timeTimestampMatch) {
+        const unixTime = parseInt(timeTimestampMatch[1]);
+        const date = new Date(unixTime * 1000);
+        
+        if (isNaN(date.getTime())) {
+          await interaction.editReply({ content: "❌ Ungültiger Discord-Zeitstempel in der Uhrzeit" });
+          return;
+        }
+        
+        // Extract time
+        const hours = date.getHours().toString().padStart(2, '0');
+        const minutes = date.getMinutes().toString().padStart(2, '0');
+        finalTime = `${hours}:${minutes}`;
+      } else {
+        // Validate normal time format
+        const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+        if (!timeRegex.test(finalTime)) {
+          await interaction.editReply({ 
+            content: "❌ Ungültiges Uhrzeitformat. Verwende HH:MM oder Discord-Zeitstempel <t:TIMESTAMP:t>" 
           });
           return;
         }
       }
       
-      // Alle Benutzer-IDs kombinieren (ohne Duplikate)
-      const allUserIds = [...new Set([...userIds, ...userIdsFromRoles])];
-      console.log(`Total users to invite: ${allUserIds.length}`);
+      // Title and comment validation
+      if (title.length > 100) {
+        await interaction.editReply({ content: "❌ Titel zu lang (max 100 Zeichen)" });
+        return;
+      }
       
-      // Validate participants
+      if (comment && comment.length > 500) {
+        await interaction.editReply({ content: "❌ Kommentar zu lang (max 500 Zeichen)" });
+        return;
+      }
+      
+      // Extract participants
+      const userMatches = participantsString.match(/<@!?(\d+)>/g) || [];
+      const roleMatches = participantsString.match(/<@&(\d+)>/g) || [];
+      
+      const userIds = userMatches.map((match: string) => match.replace(/<@!?(\d+)>/, '$1'));
+      const roleIds = roleMatches.map((match: string) => match.replace(/<@&(\d+)>/, '$1'));
+      
+      let allUserIds = [...userIds];
+      const processedRoleNames: string[] = [];
+      
+      // Process roles
+      if (roleIds.length > 0) {
+        try {
+          await interaction.guild.members.fetch();
+          
+          for (const roleId of roleIds) {
+            try {
+              const role = await interaction.guild.roles.fetch(roleId);
+              if (role) {
+                processedRoleNames.push(role.name);
+                const channel = interaction.channel as TextChannel;
+                
+                for (const [memberId, member] of role.members) {
+                  if (!member.user.bot && 
+                      !allUserIds.includes(memberId) && 
+                      channel.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel)) {
+                    allUserIds.push(memberId);
+                  }
+                }
+              }
+            } catch (error) {
+              console.error(`Error processing role ${roleId}:`, error);
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching guild members:', error);
+          await interaction.editReply({ content: "❌ Fehler beim Laden der Servermitglieder" });
+          return;
+        }
+      }
+      
       if (allUserIds.length === 0) {
-        await interaction.editReply({ 
-          content: "❌ **Keine gültigen Teilnehmer**\n\nBitte erwähne mindestens einen Benutzer oder eine Rolle.\n\n💡 **Beispiel:** `@Nutzer1 @TeamRolle`" 
-        });
+        await interaction.editReply({ content: "❌ Keine gültigen Teilnehmer gefunden" });
         return;
       }
       
       if (allUserIds.length > 50) {
-        await interaction.editReply({ 
-          content: "❌ **Zu viele Teilnehmer**\n\nMaximal 50 Teilnehmer pro Event erlaubt.\n\n📊 **Gefunden:** " + allUserIds.length + " Teilnehmer" 
-        });
+        await interaction.editReply({ content: `❌ Zu viele Teilnehmer (${allUserIds.length}/50)` });
         return;
       }
       
-      // Validate that mentioned users exist and are not bots
+      // Validate users exist and are not bots
       let validUserIds: string[] = [];
-      let invalidUsers = 0;
       let botUsers = 0;
+      let invalidUsers = 0;
       
       for (const userId of allUserIds) {
         try {
           const member = await interaction.guild.members.fetch(userId);
           if (member.user.bot) {
             botUsers++;
-            console.log(`Skipping bot user: ${member.user.username}`);
-            continue;
+          } else {
+            validUserIds.push(userId);
           }
-          validUserIds.push(userId);
         } catch (error) {
           invalidUsers++;
-          console.warn(`User ${userId} not found in guild`);
         }
       }
       
       if (validUserIds.length === 0) {
         await interaction.editReply({ 
-          content: "❌ **Keine gültigen Teilnehmer gefunden**\n\nAlle erwähnten Benutzer sind entweder Bots oder nicht auf diesem Server.\n\n🤖 **Bots:** " + botUsers + "\n❓ **Nicht gefunden:** " + invalidUsers 
+          content: `❌ Keine gültigen Teilnehmer. Bots: ${botUsers}, Nicht gefunden: ${invalidUsers}` 
         });
         return;
       }
       
       // Progress update
       await interaction.editReply({ 
-        content: `🔄 **Event wird erstellt...**\n\n📝 **Titel:** ${title}\n📅 **Datum:** ${date} um ${time} Uhr\n👥 **Teilnehmer:** ${validUserIds.length} Personen${processedRoleNames.length > 0 ? `\n🏷️ **Rollen:** ${processedRoleNames.join(', ')}` : ''}\n\n⏳ Bitte warten...` 
+        content: `🔄 Event wird erstellt...\n\n📝 ${title}\n📅 ${finalDate} um ${finalTime}\n👥 ${validUserIds.length} Teilnehmer\n\n⏳ Bitte warten...` 
       });
       
       try {
-        // Event erstellen
+        // Create event
         const eventId = await createEvent(
           title,
-          date,
-          time,
+          finalDate,
+          finalTime,
           interaction.user.id,
           validUserIds,
           interaction.channel as TextChannel,
-          relativeDate,
+          finalRelativeDate,
           comment
         );
         
-        console.log(`Event created with ID: ${eventId}`);
-        
         // Progress update
         await interaction.editReply({ 
-          content: `✅ **Event erstellt!**\n\n📝 **Event ID:** ${eventId}\n👥 **Lade ${validUserIds.length} Teilnehmer ein...**\n\n⏳ Bitte warten...` 
+          content: `✅ Event erstellt!\n\n📝 Event ID: ${eventId}\n👥 Lade ${validUserIds.length} Teilnehmer ein...\n\n⏳ Bitte warten...` 
         });
         
-        // Teilnehmer einladen
+        // Invite participants
         let successCount = 0;
         let failCount = 0;
         let failedUsernames: string[] = [];
         
-        // Batch processing für bessere Performance
-        const batchSize = 5;
-        for (let i = 0; i < validUserIds.length; i += batchSize) {
-          const batch = validUserIds.slice(i, i + batchSize);
-          
-          const batchPromises = batch.map(async (userId) => {
-            try {
-              const user = await interaction.client.users.fetch(userId);
-              const success = await inviteParticipant(
-                eventId, 
-                user, 
-                title, 
-                date, 
-                time, 
-                relativeDate, 
-                comment
-              );
-              
-              if (success) {
-                successCount++;
-                console.log(`✅ Successfully invited: ${user.username}`);
-              } else {
-                failCount++;
-                failedUsernames.push(user.username);
-                console.log(`❌ Failed to invite: ${user.username}`);
-              }
-            } catch (error) {
-              console.error(`Error inviting user ${userId}:`, error);
+        for (const userId of validUserIds) {
+          try {
+            const user = await interaction.client.users.fetch(userId);
+            const success = await inviteParticipant(
+              eventId, 
+              user, 
+              title, 
+              finalDate,
+              finalTime, 
+              finalRelativeDate,
+              comment
+            );
+            
+            if (success) {
+              successCount++;
+            } else {
               failCount++;
-              
-              try {
-                const user = await interaction.client.users.fetch(userId);
-                failedUsernames.push(user.username);
-              } catch {
-                failedUsernames.push(`ID:${userId}`);
-              }
+              failedUsernames.push(user.username);
             }
-          });
-          
-          await Promise.all(batchPromises);
-          
-          // Progress update for large batches
-          if (validUserIds.length > 10 && i + batchSize < validUserIds.length) {
-            const progress = Math.round(((i + batchSize) / validUserIds.length) * 100);
-            await interaction.editReply({ 
-              content: `✅ **Event erstellt!**\n\n📝 **Event ID:** ${eventId}\n👥 **Einladungen:** ${i + batchSize}/${validUserIds.length} (${progress}%)\n\n⏳ Wird fortgesetzt...` 
-            });
+          } catch (error) {
+            failCount++;
+            failedUsernames.push(`ID:${userId}`);
           }
         }
         
-        // Erstelle Zusammenfassung über eingeladene Rollen
-        let rolesSummary = "";
-        if (processedRoleNames.length > 0) {
-          rolesSummary = `\n🏷️ **Eingeladene Rollen:** ${processedRoleNames.join(', ')}`;
-        }
+        // Final message
+        let rolesSummary = processedRoleNames.length > 0 ? `\n🏷️ Rollen: ${processedRoleNames.join(', ')}` : '';
+        let failedSummary = failedUsernames.length > 0 ? `\n⚠️ Fehlgeschlagen: ${failedUsernames.length}` : '';
+        let warningsSummary = (botUsers > 0 || invalidUsers > 0) ? `\n💡 Übersprungen: ${botUsers} Bots, ${invalidUsers} nicht gefunden` : '';
         
-        // Erstelle Zusammenfassung über fehlgeschlagene Einladungen
-        let failedSummary = "";
-        if (failedUsernames.length > 0) {
-          if (failedUsernames.length <= 10) {
-            failedSummary = `\n\n⚠️ **Fehlgeschlagene Einladungen:**\n${failedUsernames.map(name => `• ${name}`).join('\n')}`;
-          } else {
-            failedSummary = `\n\n⚠️ **Fehlgeschlagene Einladungen:** ${failedUsernames.length} (siehe Logs für Details)`;
-          }
-        }
-        
-        // Warnings für gefilterte Benutzer
-        let warningsSummary = "";
-        if (botUsers > 0 || invalidUsers > 0) {
-          warningsSummary = `\n\n💡 **Hinweise:**`;
-          if (botUsers > 0) {
-            warningsSummary += `\n• ${botUsers} Bots wurden übersprungen`;
-          }
-          if (invalidUsers > 0) {
-            warningsSummary += `\n• ${invalidUsers} Benutzer nicht auf diesem Server gefunden`;
-          }
-        }
-        
-        // Final success message
-        const finalMessage = `🎉 **Terminsuche erfolgreich erstellt!**
+        const finalMessage = `🎉 Terminsuche erfolgreich erstellt!
 
-📝 **Event:** ${title}
-📅 **Datum:** ${date} um ${time} Uhr
-🆔 **Event ID:** ${eventId}
+📝 Event: ${title}
+📅 Datum: ${finalDate} um ${finalTime}
+🆔 Event ID: ${eventId}
 
-📊 **Einladungsstatistik:**
+📊 Einladungsstatistik:
 ✅ ${successCount} Teilnehmer erfolgreich eingeladen
 ${failCount > 0 ? `❌ ${failCount} Einladungen fehlgeschlagen` : '✨ Alle Einladungen erfolgreich!'}${rolesSummary}${failedSummary}${warningsSummary}
 
-🔔 **Nächste Schritte:**
+🔔 Nächste Schritte:
 • Teilnehmer erhalten DMs mit Antwortmöglichkeiten
 • Status wird automatisch im Channel aktualisiert
-• Verwende die Admin-Buttons für Erinnerungen
-
-💡 **Tipp:** Mit \`/adduser eventid:${eventId}\` können später weitere Teilnehmer hinzugefügt werden.`;
+• Verwende die Admin-Buttons für Erinnerungen`;
 
         await interaction.editReply({ content: finalMessage });
         
@@ -395,7 +318,7 @@ ${failCount > 0 ? `❌ ${failCount} Einladungen fehlgeschlagen` : '✨ Alle Einl
       } catch (eventError) {
         console.error('Error during event creation:', eventError);
         await interaction.editReply({ 
-          content: `❌ **Event-Erstellung fehlgeschlagen**\n\n**Fehler:** ${eventError instanceof Error ? eventError.message : 'Unbekannter Fehler'}\n\n💡 **Lösungsvorschläge:**\n• Prüfe die Bot-Berechtigungen\n• Versuche es mit weniger Teilnehmern\n• Kontaktiere den Administrator` 
+          content: `❌ Event-Erstellung fehlgeschlagen: ${eventError instanceof Error ? eventError.message : 'Unbekannter Fehler'}` 
         });
       }
       
@@ -404,7 +327,7 @@ ${failCount > 0 ? `❌ ${failCount} Einladungen fehlgeschlagen` : '✨ Alle Einl
       
       try {
         const errorMessage = mainError instanceof Error ? mainError.message : 'Unbekannter Fehler';
-        const response = `❌ **Kritischer Fehler aufgetreten**\n\n\`\`\`${errorMessage}\`\`\`\n\n🔧 **Hilfe:**\n• Prüfe deine Eingabe\n• Versuche es später erneut\n• Kontaktiere den Support falls das Problem bestehen bleibt`;
+        const response = `❌ Kritischer Fehler: ${errorMessage}`;
         
         if (interaction.deferred) {
           await interaction.editReply({ content: response });

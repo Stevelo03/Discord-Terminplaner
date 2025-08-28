@@ -22,7 +22,6 @@ import {
   eventAuditLogs 
 } from './db/schema';
 import { eq, and, desc, inArray, sql } from 'drizzle-orm';
-
 // Ensure server exists in database
 async function ensureServer(serverId: string, serverName: string): Promise<void> {
   try {
@@ -49,7 +48,6 @@ async function ensureServer(serverId: string, serverName: string): Promise<void>
     throw error;
   }
 }
-
 // Ensure server user exists in database
 async function ensureServerUser(serverId: string, userId: string, username: string, displayName?: string): Promise<number> {
   try {
@@ -57,7 +55,6 @@ async function ensureServerUser(serverId: string, userId: string, username: stri
       .from(serverUsers)
       .where(and(eq(serverUsers.serverId, serverId), eq(serverUsers.userId, userId)))
       .limit(1);
-    
     if (existingUser.length === 0) {
       const [newUser] = await db.insert(serverUsers).values({
         serverId: serverId,
@@ -69,7 +66,6 @@ async function ensureServerUser(serverId: string, userId: string, username: stri
         firstSeenAt: new Date(),
         lastActiveAt: new Date()
       }).returning();
-      
       console.log(`✅ Created server user: ${username}`);
       return newUser.id;
     } else {
@@ -80,7 +76,6 @@ async function ensureServerUser(serverId: string, userId: string, username: stri
           lastActiveAt: new Date() 
         })
         .where(eq(serverUsers.id, existingUser[0].id));
-      
       return existingUser[0].id;
     }
   } catch (error) {
@@ -88,7 +83,6 @@ async function ensureServerUser(serverId: string, userId: string, username: stri
     throw error;
   }
 }
-
 // Create audit log entry
 async function createAuditLog(eventId: string, action: string, performedBy: string, details?: any): Promise<void> {
   try {
@@ -103,7 +97,6 @@ async function createAuditLog(eventId: string, action: string, performedBy: stri
     console.error('Error creating audit log:', error);
   }
 }
-
 // Create response history entry
 async function createResponseHistory(
   participantId: number, 
@@ -129,7 +122,6 @@ async function createResponseHistory(
     console.error('Error creating response history:', error);
   }
 }
-
 // Calculate hours before event
 function calculateHoursBeforeEvent(eventDate: string, eventTime: string): number {
   try {
@@ -144,7 +136,6 @@ function calculateHoursBeforeEvent(eventDate: string, eventTime: string): number
       parseInt(hours), 
       parseInt(minutes)
     );
-    
     const now = new Date();
     const diffMs = eventDateTime.getTime() - now.getTime();
     const hoursBeforeEvent = diffMs / (1000 * 60 * 60);
@@ -155,7 +146,6 @@ function calculateHoursBeforeEvent(eventDate: string, eventTime: string): number
     return 0;
   }
 }
-
 // Get server user ID helper
 async function getServerUserId(serverId: string, userId: string): Promise<number | null> {
   try {
@@ -166,14 +156,12 @@ async function getServerUserId(serverId: string, userId: string): Promise<number
         eq(serverUsers.userId, userId)
       ))
       .limit(1);
-    
     return serverUser.length > 0 ? serverUser[0].id : null;
   } catch (error) {
     console.error('Error getting server user ID:', error);
     return null;
   }
 }
-
 // Neues Event erstellen
 export async function createEvent(
   title: string,

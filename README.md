@@ -179,6 +179,7 @@ Beim Klick auf "Terminsuche abbrechen" öffnet sich ein Modal mit zwei Optionen:
 - Vollständige Audit-Historie für Compliance
 - Server-isolierte Datenspeicherung
 - Automatische Backups durch SQLite WAL-Modus
+- DSVGO Konformität entfernt
 
 ## Lizenz 📜
 

@@ -153,7 +153,8 @@ if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
       const analysisType = interaction.options.getString('type') || 'server';
       const includeCharts = interaction.options.getBoolean('include_charts') || false;
       const targetUser = interaction.options.getUser('user');
-      const daysBack = interaction.options.getInteger('days');
+      const daysBackRaw = interaction.options.getInteger('days');
+      const daysBack = daysBackRaw !== null ? Math.max(1, daysBackRaw) : null;
 
       // Validate server context
       if (!interaction.guild) {
@@ -354,7 +355,7 @@ async function handleServerAnalytics(
         console.error('Error generating Server Charts:', error);
         embed.addFields({
           name: '⚠️ Chart-Information',
-          value: `Diagramme konnten nicht generiert werden.\n**Grund:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`,
+          value: `Diagramme konnten nicht generiert werden. Bitte versuche es erneut.`,
           inline: false
         });
       }
@@ -364,7 +365,7 @@ async function handleServerAnalytics(
   } catch (error) {
     console.error('Error in handleServerAnalytics:', error);
     await interaction.editReply({ 
-      content: `❌ **Server Analytics Fehler:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}` 
+      content: `❌ **Server Analytics Fehler.** Bitte versuche es erneut.`
     });
   }
 }
@@ -468,7 +469,7 @@ async function handlePersonalAnalytics(
         console.error('Error generating Personal Charts:', error);
         embed.addFields({
           name: '⚠️ Chart-Information',
-          value: `Persönliche Diagramme konnten nicht generiert werden.\n**Grund:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`,
+          value: `Persönliche Diagramme konnten nicht generiert werden. Bitte versuche es erneut.`,
           inline: false
         });
       }
@@ -478,7 +479,7 @@ async function handlePersonalAnalytics(
   } catch (error) {
     console.error('Error in handlePersonalAnalytics:', error);
     await interaction.editReply({ 
-      content: `❌ **Personal Analytics Fehler:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}` 
+      content: `❌ **Personal Analytics Fehler.** Bitte versuche es erneut.`
     });
   }
 }
@@ -585,7 +586,7 @@ async function handleBehaviorAnalytics(
         console.error('Error generating Behavior Charts:', error);
         embed.addFields({
           name: '⚠️ Chart-Information',
-          value: `Verhaltensmuster-Diagramme konnten nicht generiert werden.\n**Grund:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`,
+          value: `Verhaltensmuster-Diagramme konnten nicht generiert werden. Bitte versuche es erneut.`,
           inline: false
         });
       }
@@ -595,7 +596,7 @@ async function handleBehaviorAnalytics(
   } catch (error) {
     console.error('Error in handleBehaviorAnalytics:', error);
     await interaction.editReply({ 
-      content: `❌ **Behavior Analytics Fehler:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}` 
+      content: `❌ **Behavior Analytics Fehler.** Bitte versuche es erneut.`
     });
   }
 }
@@ -698,7 +699,7 @@ async function handleTrendAnalytics(
         console.error('Error generating Trend Charts:', error);
         embed.addFields({
           name: '⚠️ Chart-Information',
-          value: `Trend-Diagramme konnten nicht generiert werden.\n**Grund:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`,
+          value: `Trend-Diagramme konnten nicht generiert werden. Bitte versuche es erneut.`,
           inline: false
         });
       }
@@ -708,7 +709,7 @@ async function handleTrendAnalytics(
   } catch (error) {
     console.error('Error in handleTrendAnalytics:', error);
     await interaction.editReply({ 
-      content: `❌ **Trend Analytics Fehler:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}` 
+      content: `❌ **Trend Analytics Fehler.** Bitte versuche es erneut.`
     });
   }
 }
@@ -812,7 +813,7 @@ async function handleResponseAnalytics(
         console.error('Error generating Response Charts:', error);
         embed.addFields({
           name: '⚠️ Chart-Information',
-          value: `Response-Analytics Diagramme konnten nicht generiert werden.\n**Grund:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`,
+          value: `Response-Analytics Diagramme konnten nicht generiert werden. Bitte versuche es erneut.`,
           inline: false
         });
       }
@@ -822,7 +823,7 @@ async function handleResponseAnalytics(
   } catch (error) {
     console.error('Error in handleResponseAnalytics:', error);
     await interaction.editReply({ 
-      content: `❌ **Response Analytics Fehler:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}` 
+      content: `❌ **Response Analytics Fehler.** Bitte versuche es erneut.`
     });
   }
 }
@@ -930,7 +931,7 @@ async function handleDetailedAnalytics(
         console.error('Error generating Detailed Charts:', error);
         embed.addFields({
           name: '⚠️ Chart-Information',
-          value: `Detailed Analytics Diagramme konnten nicht generiert werden.\n**Grund:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`,
+          value: `Detailed Analytics Diagramme konnten nicht generiert werden. Bitte versuche es erneut.`,
           inline: false
         });
       }
@@ -940,7 +941,7 @@ async function handleDetailedAnalytics(
   } catch (error) {
     console.error('Error in handleDetailedAnalytics:', error);
     await interaction.editReply({ 
-      content: `❌ **Detailed Analytics Fehler:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}` 
+      content: `❌ **Detailed Analytics Fehler.** Bitte versuche es erneut.`
     });
   }
 }
@@ -1024,7 +1025,7 @@ async function handleDataExport(
   } catch (error) {
     console.error('Critical error in Data Export:', error);
     await interaction.editReply({ 
-      content: `❌ **Export-Fehler**\n\n\`\`\`${error instanceof Error ? error.message : 'Unbekannter Fehler'}\`\`\`\n\n💡 **Mögliche Lösungen:**\n• Reduziere den Zeitraum\n• Prüfe die Daten-Integrität\n• Versuche es später erneut` 
+      content: `❌ **Export-Fehler**\n\nDaten konnten nicht exportiert werden.\n\n💡 **Mögliche Lösungen:**\n• Reduziere den Zeitraum\n• Versuche es später erneut`
     });
   }
 }

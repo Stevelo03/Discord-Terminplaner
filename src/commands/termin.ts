@@ -1,9 +1,21 @@
 // src/commands/termin.ts
-import { SlashCommandBuilder } from 'discord.js';
-import { CommandInteraction, TextChannel, GuildMember, Role } from 'discord.js';
-import { PermissionFlagsBits } from 'discord.js';
-import { ChatInputCommandInteraction } from 'discord.js';
+import { SlashCommandBuilder, ChannelType } from 'discord.js';
+import { TextChannel, PermissionFlagsBits } from 'discord.js';
+import { ChatInputCommandInteraction, GuildMember } from 'discord.js';
 import { createEvent, inviteParticipant } from '../terminManager';
+import { CONFIG } from '../config';
+import { db } from '../db';
+import { events } from '../db/schema';
+import { eq } from 'drizzle-orm';
+
+async function fetchMemberWithTimeout(guild: any, userId: string): Promise<GuildMember> {
+  return Promise.race([
+    guild.members.fetch(userId) as Promise<GuildMember>,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout fetching member ${userId}`)), CONFIG.USER_FETCH_TIMEOUT_MS)
+    )
+  ]);
+}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -46,19 +58,26 @@ module.exports = {
         return;
       }
 
+      // Verify command is run in a text channel
+      if (!interaction.channel || interaction.channel.type !== ChannelType.GuildText) {
+        await interaction.editReply({ content: "❌ Dieser Befehl kann nur in Text-Kanälen ausgeführt werden." });
+        return;
+      }
+      const textChannel = interaction.channel as TextChannel;
+
       // Basic validation
       if (!title.trim()) {
         await interaction.editReply({ content: "❌ Titel erforderlich" });
         return;
       }
 
-      if (title.length > 100) {
-        await interaction.editReply({ content: "❌ Titel zu lang (max 100 Zeichen)" });
+      if (title.length > CONFIG.MAX_EVENT_TITLE_LENGTH) {
+        await interaction.editReply({ content: `❌ Titel zu lang (max ${CONFIG.MAX_EVENT_TITLE_LENGTH} Zeichen)` });
         return;
       }
 
-      if (comment && comment.length > 500) {
-        await interaction.editReply({ content: "❌ Kommentar zu lang (max 500 Zeichen)" });
+      if (comment && comment.length > CONFIG.MAX_COMMENT_LENGTH) {
+        await interaction.editReply({ content: `❌ Kommentar zu lang (max ${CONFIG.MAX_COMMENT_LENGTH} Zeichen)` });
         return;
       }
 
@@ -84,10 +103,15 @@ module.exports = {
         return;
       }
 
+      if (eventDate.getFullYear() > CONFIG.MAX_TIMESTAMP_YEAR) {
+        await interaction.editReply({ content: `❌ Zeitstempel zu weit in der Zukunft (max ${CONFIG.MAX_TIMESTAMP_YEAR})` });
+        return;
+      }
+
       // Derive date/time/relativeDate from the single timestamp
-      const finalDate = `<t:${unixSeconds}:D>`;       // Renders as localized date
-      const finalTime = `<t:${unixSeconds}:t>`;        // Renders as localized short time
-      const finalRelativeDate = `<t:${unixSeconds}:R>`; // Always present, renders as "in X days"
+      const finalDate = `<t:${unixSeconds}:D>`;
+      const finalTime = `<t:${unixSeconds}:t>`;
+      const finalRelativeDate = `<t:${unixSeconds}:R>`;
 
       // Extract participants
       const userMatches = participantsString.match(/<@!?(\d+)>/g) || [];
@@ -109,12 +133,11 @@ module.exports = {
               const role = await interaction.guild.roles.fetch(roleId);
               if (role) {
                 processedRoleNames.push(role.name);
-                const channel = interaction.channel as TextChannel;
 
                 for (const [memberId, member] of role.members) {
                   if (!member.user.bot &&
                       !allUserIds.includes(memberId) &&
-                      channel.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel)) {
+                      textChannel.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel)) {
                     allUserIds.push(memberId);
                   }
                 }
@@ -135,8 +158,8 @@ module.exports = {
         return;
       }
 
-      if (allUserIds.length > 50) {
-        await interaction.editReply({ content: `❌ Zu viele Teilnehmer (${allUserIds.length}/50)` });
+      if (allUserIds.length > CONFIG.MAX_PARTICIPANTS_PER_EVENT) {
+        await interaction.editReply({ content: `❌ Zu viele Teilnehmer (${allUserIds.length}/${CONFIG.MAX_PARTICIPANTS_PER_EVENT})` });
         return;
       }
 
@@ -147,7 +170,7 @@ module.exports = {
 
       for (const userId of allUserIds) {
         try {
-          const member = await interaction.guild.members.fetch(userId);
+          const member = await fetchMemberWithTimeout(interaction.guild, userId);
           if (member.user.bot) {
             botUsers++;
           } else {
@@ -178,7 +201,7 @@ module.exports = {
           finalTime,
           interaction.user.id,
           validUserIds,
-          interaction.channel as TextChannel,
+          textChannel,
           finalRelativeDate,
           comment,
           unixSeconds
@@ -219,10 +242,25 @@ module.exports = {
           }
         }
 
+        // If no invitations succeeded, cancel the event to avoid orphaned records
+        if (successCount === 0 && failCount > 0) {
+          try {
+            await db.update(events)
+              .set({ status: 'CANCELLED', cancelledAt: new Date() })
+              .where(eq(events.id, eventId));
+          } catch (cleanupError) {
+            console.error('Error cleaning up event after failed invitations:', cleanupError);
+          }
+          await interaction.editReply({
+            content: `❌ Event-Erstellung fehlgeschlagen: Keine Einladungen konnten zugestellt werden. Das Event wurde nicht angelegt.`
+          });
+          return;
+        }
+
         // Final message
-        let rolesSummary = processedRoleNames.length > 0 ? `\n🏷️ Rollen: ${processedRoleNames.join(', ')}` : '';
-        let failedSummary = failedUsernames.length > 0 ? `\n⚠️ Fehlgeschlagen: ${failedUsernames.length}` : '';
-        let warningsSummary = (botUsers > 0 || invalidUsers > 0) ? `\n💡 Übersprungen: ${botUsers} Bots, ${invalidUsers} nicht gefunden` : '';
+        const rolesSummary = processedRoleNames.length > 0 ? `\n🏷️ Rollen: ${processedRoleNames.join(', ')}` : '';
+        const failedSummary = failedUsernames.length > 0 ? `\n⚠️ Fehlgeschlagen: ${failedUsernames.length}` : '';
+        const warningsSummary = (botUsers > 0 || invalidUsers > 0) ? `\n💡 Übersprungen: ${botUsers} Bots, ${invalidUsers} nicht gefunden` : '';
 
         const finalMessage = `🎉 Terminsuche erfolgreich erstellt!
 
@@ -246,7 +284,7 @@ ${failCount > 0 ? `❌ ${failCount} Einladungen fehlgeschlagen` : '✨ Alle Einl
       } catch (eventError) {
         console.error('Error during event creation:', eventError);
         await interaction.editReply({
-          content: `❌ Event-Erstellung fehlgeschlagen: ${eventError instanceof Error ? eventError.message : 'Unbekannter Fehler'}`
+          content: `❌ Event-Erstellung fehlgeschlagen. Bitte versuche es erneut.`
         });
       }
 
@@ -254,8 +292,7 @@ ${failCount > 0 ? `❌ ${failCount} Einladungen fehlgeschlagen` : '✨ Alle Einl
       console.error("Critical error in termin command:", mainError);
 
       try {
-        const errorMessage = mainError instanceof Error ? mainError.message : 'Unbekannter Fehler';
-        const response = `❌ Kritischer Fehler: ${errorMessage}`;
+        const response = `❌ Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es erneut.`;
 
         if (interaction.deferred) {
           await interaction.editReply({ content: response });

@@ -102,7 +102,7 @@ module.exports = {
       
       // Progress update
       await interaction.editReply({ 
-        content: `🔄 **Verarbeite zu entfernende Teilnehmer...**\n\n📝 **Event:** ${event.title}\n📅 **Datum:** ${event.date} um ${event.time} Uhr\n\n⏳ Analysiere Benutzer und Rollen...` 
+        content: `🔄 **Verarbeite zu entfernende Teilnehmer...**\n\n📝 **Event:** ${event.title}\n📅 **Datum:** ${event.date} ${event.time}\n\n⏳ Analysiere Benutzer und Rollen...` 
       });
       
       // Aktuelle Teilnehmer aus Database laden
@@ -237,27 +237,34 @@ module.exports = {
       const participantIdsToRemove = participantsToRemove.map(p => p.id);
       
       try {
-        // Database transaction für atomare Operation
-        await db.delete(participants)
-          .where(inArray(participants.id, participantIdsToRemove));
-        
-        console.log(`✅ Successfully removed ${participantsToRemove.length} participants from database`);
-        
-        // Create audit log
-        await createAuditLog(eventId, 'PARTICIPANT_REMOVED', interaction.user.id, {
-          removedCount: participantsToRemove.length,
-          removedUsers: removedUserInfo,
-          performedBy: interaction.user.username,
-          roleNames: processedRoleNames
+        // Atomare Transaktion: Teilnehmer entfernen und Audit-Log erstellen
+        await db.transaction(async (tx: typeof db) => {
+          await tx.delete(participants)
+            .where(inArray(participants.id, participantIdsToRemove));
+
+          await tx.insert(eventAuditLogs).values({
+            eventId: eventId,
+            action: 'PARTICIPANT_REMOVED' as any,
+            performedBy: interaction.user.id,
+            performedAt: new Date(),
+            details: JSON.stringify({
+              removedCount: participantsToRemove.length,
+              removedUsers: removedUserInfo,
+              performedBy: interaction.user.username,
+              roleNames: processedRoleNames
+            })
+          });
         });
-        
+
+        console.log(`✅ Successfully removed ${participantsToRemove.length} participants from database`);
+
         // Update event message
         await updateEventMessage(eventId);
-        
+
       } catch (dbError) {
         console.error('Database error during participant removal:', dbError);
-        await interaction.editReply({ 
-          content: `❌ **Datenbank-Fehler**\n\nFehler beim Entfernen der Teilnehmer aus der Datenbank.\n\n**Fehler:** ${dbError instanceof Error ? dbError.message : 'Unbekannter Datenbankfehler'}\n\n💡 **Lösungsvorschlag:** Versuche es später erneut.` 
+        await interaction.editReply({
+          content: `❌ **Datenbank-Fehler**\n\nFehler beim Entfernen der Teilnehmer. Bitte versuche es erneut.`
         });
         return;
       }
@@ -303,7 +310,7 @@ module.exports = {
       const finalMessage = `🎉 **Teilnehmer erfolgreich entfernt!**
 
 📝 **Event:** ${event.title}
-📅 **Datum:** ${event.date} um ${event.time} Uhr
+📅 **Datum:** ${event.date} ${event.time}
 🆔 **Event ID:** ${eventId}
 
 📊 **Entfernungs-Statistik:**

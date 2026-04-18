@@ -22,6 +22,8 @@ import {
   eventAuditLogs 
 } from './db/schema';
 import { eq, and, desc, inArray, sql } from 'drizzle-orm';
+import { getClient } from './clientStore';
+import { CONFIG } from './config';
 
 // Ensure server exists in database
 async function ensureServer(serverId: string, serverName: string): Promise<void> {
@@ -104,30 +106,26 @@ async function createAuditLog(eventId: string, action: string, performedBy: stri
   }
 }
 
-// Create response history entry
+// Create response history entry – throws on error so callers can handle it
 async function createResponseHistory(
-  participantId: number, 
-  oldStatus: string | null, 
-  newStatus: string, 
-  responseTimeSeconds?: number, 
+  participantId: number,
+  oldStatus: string | null,
+  newStatus: string,
+  responseTimeSeconds?: number,
   alternativeTime?: string,
   responseContext: 'INITIAL' | 'AFTER_REMINDER' | 'AFTER_START_REMINDER' | 'LAST_MINUTE' = 'INITIAL',
   hoursBeforeEvent?: number
 ): Promise<void> {
-  try {
-    await db.insert(responseHistory).values({
-      participantId: participantId,
-      oldStatus: oldStatus as any,
-      newStatus: newStatus as any,
-      changedAt: new Date(),
-      responseTimeSeconds: responseTimeSeconds,
-      alternativeTime: alternativeTime,
-      responseContext: responseContext,
-      hoursBeforeEvent: hoursBeforeEvent
-    });
-  } catch (error) {
-    console.error('Error creating response history:', error);
-  }
+  await db.insert(responseHistory).values({
+    participantId: participantId,
+    oldStatus: oldStatus as any,
+    newStatus: newStatus as any,
+    changedAt: new Date(),
+    responseTimeSeconds: responseTimeSeconds,
+    alternativeTime: alternativeTime,
+    responseContext: responseContext,
+    hoursBeforeEvent: hoursBeforeEvent
+  });
 }
 
 // Calculate hours before event
@@ -484,7 +482,7 @@ export async function updateEventMessage(eventId: string): Promise<void> {
       return;
     }
     
-    const client = (await import('./index')).default.client;
+    const client = getClient();
     const channel = await client.channels.fetch(eventData.channelId) as TextChannel;
     
     if (!channel) {
@@ -543,6 +541,19 @@ export async function updateEventMessage(eventId: string): Promise<void> {
       if (participantsText === "") {
         participantsText = "Keine Teilnehmer eingeladen.";
       } else {
+        // Truncate if field would exceed Discord embed field limit
+        if (participantsText.length > CONFIG.EMBED_PARTICIPANTS_FIELD_LIMIT) {
+          const lines = participantsText.split('\n').filter(Boolean);
+          let truncated = '';
+          let shown = 0;
+          for (const line of lines) {
+            if ((truncated + line + '\n').length > CONFIG.EMBED_PARTICIPANTS_FIELD_LIMIT - 30) break;
+            truncated += line + '\n';
+            shown++;
+          }
+          const hidden = lines.length - shown;
+          participantsText = truncated + (hidden > 0 ? `... und ${hidden} weitere` : '');
+        }
         participantsText += `\n${statusSummary}`;
       }
       
@@ -1118,6 +1129,7 @@ export async function handleCancelEvent(
             console.error(`Could not send cancellation notification to ${participant.serverUser.username}:`, error);
             notificationErrors++;
           }
+          await new Promise(resolve => setTimeout(resolve, CONFIG.DM_RATE_LIMIT_MS));
         }
       }
     }
@@ -1257,24 +1269,29 @@ export async function sendReminders(interaction: ButtonInteraction, eventId: str
           embeds: [reminderEmbed],
           components: [reminderRow]
         });
-        
+
         // Create response history entry for reminder sent
         const hoursBeforeEvent = calculateHoursBeforeEvent(eventData.date, eventData.time);
-        await createResponseHistory(
-          participant.id,
-          'PENDING',
-          'PENDING',
-          0,
-          undefined,
-          'AFTER_REMINDER',
-          hoursBeforeEvent
-        );
-        
+        try {
+          await createResponseHistory(
+            participant.id,
+            'PENDING',
+            'PENDING',
+            0,
+            undefined,
+            'AFTER_REMINDER',
+            hoursBeforeEvent
+          );
+        } catch (historyError) {
+          console.error('Error creating response history for reminder:', historyError);
+        }
+
         successCount++;
       } catch (error) {
         console.error(`Could not send reminder to ${participant.serverUser.username}:`, error);
         failCount++;
       }
+      await new Promise(resolve => setTimeout(resolve, CONFIG.DM_RATE_LIMIT_MS));
     }
     
     // Update event reminders sent count
@@ -1368,9 +1385,9 @@ export async function sendStartReminder(interaction: ButtonInteraction, eventId:
     
     // Create start reminder embed
     const startReminderEmbed = new EmbedBuilder()
-      .setColor('#FEE75C') 
+      .setColor('#FEE75C')
       .setTitle(`🎮 Termin ${eventData.title} beginnt gleich!`)
-      .setDescription(`Der Termin beginnt am ${eventData.date} um ${eventData.time} Uhr.${eventData.relativeDate ? `\nDas ist ${eventData.relativeDate}` : ''}\n\n⏰ Bitte bereite dich auf den Start vor!${eventData.comment ? `\n\n**Kommentar:** ${eventData.comment}` : ''}`)
+      .setDescription(`Der Termin findet statt am ${eventData.date} ${eventData.time}.${eventData.relativeDate ? `\n${eventData.relativeDate}` : ''}\n\n⏰ Bitte bereite dich auf den Start vor!${eventData.comment ? `\n\n**Kommentar:** ${eventData.comment}` : ''}`)
       .setTimestamp()
       .setFooter({ text: `Event ID: ${eventId}` });
 
@@ -1379,24 +1396,29 @@ export async function sendStartReminder(interaction: ButtonInteraction, eventId:
       try {
         const user = await interaction.client.users.fetch(participant.serverUser.userId);
         await user.send({ embeds: [startReminderEmbed] });
-        
+
         // Create response history entry for start reminder sent
         const hoursBeforeEvent = calculateHoursBeforeEvent(eventData.date, eventData.time);
-        await createResponseHistory(
-          participant.id,
-          participant.currentStatus,
-          participant.currentStatus,
-          0,
-          participant.alternativeTime || undefined,
-          'AFTER_START_REMINDER',
-          hoursBeforeEvent
-        );
-        
+        try {
+          await createResponseHistory(
+            participant.id,
+            participant.currentStatus,
+            participant.currentStatus,
+            0,
+            participant.alternativeTime || undefined,
+            'AFTER_START_REMINDER',
+            hoursBeforeEvent
+          );
+        } catch (historyError) {
+          console.error('Error creating response history for start reminder:', historyError);
+        }
+
         successCount++;
       } catch (error) {
         console.error(`Could not send start reminder to ${participant.serverUser.username}:`, error);
         failCount++;
       }
+      await new Promise(resolve => setTimeout(resolve, CONFIG.DM_RATE_LIMIT_MS));
     }
     
     // Create audit log

@@ -5,6 +5,7 @@ import { db } from '../db';
 import { events, participants, serverUsers } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { inviteParticipant, updateEventMessage } from '../terminManager';
+import { CONFIG } from '../config';
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -250,57 +251,46 @@ module.exports = {
         content: `✅ **Beginne Einladungen...**\n\n📝 **Event:** ${event.title}\n👥 **Neue Teilnehmer:** ${validNewUserIds.length}\n📊 **Gesamt nach Hinzufügung:** ${totalAfterAdd}\n\n⏳ Sende Einladungen...` 
       });
       
-      // Teilnehmer einladen
+      // Teilnehmer einladen (sequenziell mit Rate-Limiting)
       let successCount = 0;
       let failCount = 0;
       let failedUsernames: string[] = [];
-      
-      // Batch processing für bessere Performance
-      const batchSize = 5;
-      for (let i = 0; i < validNewUserIds.length; i += batchSize) {
-        const batch = validNewUserIds.slice(i, i + batchSize);
-        
-        const batchPromises = batch.map(async (userId) => {
-          try {
-            const user = await interaction.client.users.fetch(userId);
-            const success = await inviteParticipant(
-              eventId, 
-              user, 
-              event.title, 
-              event.date, 
-              event.time, 
-              event.relativeDate, 
-              event.comment
-            );
-            
-            if (success) {
-              successCount++;
-              console.log(`✅ Successfully added: ${user.username}`);
-            } else {
-              failCount++;
-              failedUsernames.push(user.username);
-              console.log(`❌ Failed to add: ${user.username}`);
-            }
-          } catch (error) {
-            console.error(`Error adding user ${userId}:`, error);
+
+      for (let i = 0; i < validNewUserIds.length; i++) {
+        const userId = validNewUserIds[i];
+        try {
+          const user = await interaction.client.users.fetch(userId);
+          const success = await inviteParticipant(
+            eventId,
+            user,
+            event.title,
+            event.date,
+            event.time,
+            event.relativeDate,
+            event.comment
+          );
+
+          if (success) {
+            successCount++;
+            console.log(`✅ Successfully added: ${user.username}`);
+          } else {
             failCount++;
-            
-            try {
-              const user = await interaction.client.users.fetch(userId);
-              failedUsernames.push(user.username);
-            } catch {
-              failedUsernames.push(`ID:${userId}`);
-            }
+            failedUsernames.push(user.username);
+            console.log(`❌ Failed to add: ${user.username}`);
           }
-        });
-        
-        await Promise.all(batchPromises);
-        
+        } catch (error) {
+          console.error(`Error adding user ${userId}:`, error);
+          failCount++;
+          failedUsernames.push(`ID:${userId}`);
+        }
+
+        await new Promise(resolve => setTimeout(resolve, CONFIG.DM_RATE_LIMIT_MS));
+
         // Progress update for larger batches
-        if (validNewUserIds.length > 10 && i + batchSize < validNewUserIds.length) {
-          const progress = Math.round(((i + batchSize) / validNewUserIds.length) * 100);
-          await interaction.editReply({ 
-            content: `✅ **Einladungen laufen...**\n\n📝 **Event:** ${event.title}\n👥 **Fortschritt:** ${i + batchSize}/${validNewUserIds.length} (${progress}%)\n\n⏳ Wird fortgesetzt...` 
+        if (validNewUserIds.length > 10 && (i + 1) % 5 === 0 && i + 1 < validNewUserIds.length) {
+          const progress = Math.round(((i + 1) / validNewUserIds.length) * 100);
+          await interaction.editReply({
+            content: `✅ **Einladungen laufen...**\n\n📝 **Event:** ${event.title}\n👥 **Fortschritt:** ${i + 1}/${validNewUserIds.length} (${progress}%)\n\n⏳ Wird fortgesetzt...`
           });
         }
       }
@@ -342,7 +332,7 @@ module.exports = {
       const finalMessage = `🎉 **Teilnehmer erfolgreich hinzugefügt!**
 
 📝 **Event:** ${event.title}
-📅 **Datum:** ${event.date} um ${event.time} Uhr
+📅 **Datum:** ${event.date} ${event.time}
 🆔 **Event ID:** ${eventId}
 
 📊 **Hinzufügungs-Statistik:**
@@ -365,8 +355,7 @@ ${failCount > 0 ? `❌ ${failCount} Einladungen fehlgeschlagen` : '✨ Alle Einl
       console.error("Critical error in adduser command:", mainError);
       
       try {
-        const errorMessage = mainError instanceof Error ? mainError.message : 'Unbekannter Fehler';
-        const response = `❌ **Kritischer Fehler aufgetreten**\n\n\`\`\`${errorMessage}\`\`\`\n\n🔧 **Hilfe:**\n• Prüfe die Event-ID\n• Stelle sicher, dass das Event aktiv ist\n• Versuche es später erneut\n• Kontaktiere den Support falls das Problem bestehen bleibt`;
+        const response = `❌ **Kritischer Fehler aufgetreten**\n\nBitte prüfe die Event-ID und versuche es erneut.`;
         
         if (interaction.deferred) {
           await interaction.editReply({ content: response });

@@ -12,8 +12,15 @@ import {
   deleteCommandsForAllGuilds 
 } from './deploy-commands';
 import { initializeDatabase, testDatabaseConnection } from './db';
+import { setClient } from './clientStore';
+import { CONFIG } from './config';
 
 config();
+
+if (!process.env.BOT_TOKEN) {
+  console.error('❌ BOT_TOKEN environment variable is not set');
+  process.exit(1);
+}
 
 const client = new Client({
   intents: [
@@ -23,6 +30,8 @@ const client = new Client({
     GatewayIntentBits.DirectMessages
   ]
 });
+
+setClient(client);
 
 // Collection für Befehle
 client.commands = new Collection();
@@ -119,12 +128,26 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 });
 
+// Button cooldown map for debouncing
+const buttonCooldowns = new Map<string, number>();
+
 // Button Interaktionen
 client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isButton()) {
     try {
+      // Debounce: prevent double-clicks
+      const cooldownKey = `${interaction.user.id}:${interaction.customId}`;
+      const lastUsed = buttonCooldowns.get(cooldownKey) || 0;
+      if (Date.now() - lastUsed < CONFIG.BUTTON_COOLDOWN_MS) {
+        await interaction.reply({ content: 'Bitte warte einen Moment bevor du erneut klickst.', ephemeral: true });
+        return;
+      }
+      buttonCooldowns.set(cooldownKey, Date.now());
+
       // Die EventID aus der customId extrahieren
-      const [action, eventId, option] = interaction.customId.split(':');
+      const parts = interaction.customId.split(':');
+      if (parts.length < 2) return;
+      const [action, eventId, option] = parts;
 
       if (action === 'respond') {
         const terminManager = require('./terminManager');
@@ -161,7 +184,9 @@ client.on(Events.InteractionCreate, async interaction => {
   } else if (interaction.isModalSubmit()) {
     try {
       // Die EventID aus der customId extrahieren
-      const [action, eventId] = interaction.customId.split(':');
+      const modalParts = interaction.customId.split(':');
+      if (modalParts.length < 2) return;
+      const [action, eventId] = modalParts;
       
       if (action === 'alternativeTime') {
         const terminManager = require('./terminManager');

@@ -20,6 +20,7 @@ sqlite.pragma('journal_mode = WAL');
 sqlite.pragma('synchronous = NORMAL');
 sqlite.pragma('cache_size = 1000000');
 sqlite.pragma('temp_store = memory');
+sqlite.pragma('busy_timeout = 5000');
 
 // Drizzle instance
 export const db = drizzle(sqlite, { schema });

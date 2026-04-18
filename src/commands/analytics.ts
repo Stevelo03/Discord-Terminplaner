@@ -153,7 +153,8 @@ if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
       const analysisType = interaction.options.getString('type') || 'server';
       const includeCharts = interaction.options.getBoolean('include_charts') || false;
       const targetUser = interaction.options.getUser('user');
-      const daysBack = interaction.options.getInteger('days');
+      const daysBackRaw = interaction.options.getInteger('days');
+      const daysBack = daysBackRaw !== null ? Math.max(1, daysBackRaw) : null;
 
       // Validate server context
       if (!interaction.guild) {
@@ -354,7 +355,7 @@ async function handleServerAnalytics(
         console.error('Error generating Server Charts:', error);
         embed.addFields({
           name: '⚠️ Chart-Information',
-          value: `Diagramme konnten nicht generiert werden.\n**Grund:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`,
+          value: `Diagramme konnten nicht generiert werden. Bitte versuche es erneut.`,
           inline: false
         });
       }
@@ -364,7 +365,7 @@ async function handleServerAnalytics(
   } catch (error) {
     console.error('Error in handleServerAnalytics:', error);
     await interaction.editReply({ 
-      content: `❌ **Server Analytics Fehler:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}` 
+      content: `❌ **Server Analytics Fehler.** Bitte versuche es erneut.`
     });
   }
 }
@@ -468,7 +469,7 @@ async function handlePersonalAnalytics(
         console.error('Error generating Personal Charts:', error);
         embed.addFields({
           name: '⚠️ Chart-Information',
-          value: `Persönliche Diagramme konnten nicht generiert werden.\n**Grund:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`,
+          value: `Persönliche Diagramme konnten nicht generiert werden. Bitte versuche es erneut.`,
           inline: false
         });
       }
@@ -478,7 +479,7 @@ async function handlePersonalAnalytics(
   } catch (error) {
     console.error('Error in handlePersonalAnalytics:', error);
     await interaction.editReply({ 
-      content: `❌ **Personal Analytics Fehler:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}` 
+      content: `❌ **Personal Analytics Fehler.** Bitte versuche es erneut.`
     });
   }
 }
@@ -585,7 +586,7 @@ async function handleBehaviorAnalytics(
         console.error('Error generating Behavior Charts:', error);
         embed.addFields({
           name: '⚠️ Chart-Information',
-          value: `Verhaltensmuster-Diagramme konnten nicht generiert werden.\n**Grund:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`,
+          value: `Verhaltensmuster-Diagramme konnten nicht generiert werden. Bitte versuche es erneut.`,
           inline: false
         });
       }
@@ -595,7 +596,7 @@ async function handleBehaviorAnalytics(
   } catch (error) {
     console.error('Error in handleBehaviorAnalytics:', error);
     await interaction.editReply({ 
-      content: `❌ **Behavior Analytics Fehler:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}` 
+      content: `❌ **Behavior Analytics Fehler.** Bitte versuche es erneut.`
     });
   }
 }
@@ -698,7 +699,7 @@ async function handleTrendAnalytics(
         console.error('Error generating Trend Charts:', error);
         embed.addFields({
           name: '⚠️ Chart-Information',
-          value: `Trend-Diagramme konnten nicht generiert werden.\n**Grund:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`,
+          value: `Trend-Diagramme konnten nicht generiert werden. Bitte versuche es erneut.`,
           inline: false
         });
       }
@@ -708,7 +709,7 @@ async function handleTrendAnalytics(
   } catch (error) {
     console.error('Error in handleTrendAnalytics:', error);
     await interaction.editReply({ 
-      content: `❌ **Trend Analytics Fehler:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}` 
+      content: `❌ **Trend Analytics Fehler.** Bitte versuche es erneut.`
     });
   }
 }
@@ -812,7 +813,7 @@ async function handleResponseAnalytics(
         console.error('Error generating Response Charts:', error);
         embed.addFields({
           name: '⚠️ Chart-Information',
-          value: `Response-Analytics Diagramme konnten nicht generiert werden.\n**Grund:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`,
+          value: `Response-Analytics Diagramme konnten nicht generiert werden. Bitte versuche es erneut.`,
           inline: false
         });
       }
@@ -822,7 +823,7 @@ async function handleResponseAnalytics(
   } catch (error) {
     console.error('Error in handleResponseAnalytics:', error);
     await interaction.editReply({ 
-      content: `❌ **Response Analytics Fehler:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}` 
+      content: `❌ **Response Analytics Fehler.** Bitte versuche es erneut.`
     });
   }
 }
@@ -930,7 +931,7 @@ async function handleDetailedAnalytics(
         console.error('Error generating Detailed Charts:', error);
         embed.addFields({
           name: '⚠️ Chart-Information',
-          value: `Detailed Analytics Diagramme konnten nicht generiert werden.\n**Grund:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}`,
+          value: `Detailed Analytics Diagramme konnten nicht generiert werden. Bitte versuche es erneut.`,
           inline: false
         });
       }
@@ -940,7 +941,7 @@ async function handleDetailedAnalytics(
   } catch (error) {
     console.error('Error in handleDetailedAnalytics:', error);
     await interaction.editReply({ 
-      content: `❌ **Detailed Analytics Fehler:** ${error instanceof Error ? error.message : 'Unbekannter Fehler'}` 
+      content: `❌ **Detailed Analytics Fehler.** Bitte versuche es erneut.`
     });
   }
 }
@@ -1024,7 +1025,7 @@ async function handleDataExport(
   } catch (error) {
     console.error('Critical error in Data Export:', error);
     await interaction.editReply({ 
-      content: `❌ **Export-Fehler**\n\n\`\`\`${error instanceof Error ? error.message : 'Unbekannter Fehler'}\`\`\`\n\n💡 **Mögliche Lösungen:**\n• Reduziere den Zeitraum\n• Prüfe die Daten-Integrität\n• Versuche es später erneut` 
+      content: `❌ **Export-Fehler**\n\nDaten konnten nicht exportiert werden.\n\n💡 **Mögliche Lösungen:**\n• Reduziere den Zeitraum\n• Versuche es später erneut`
     });
   }
 }
@@ -1064,7 +1065,7 @@ async function calculateServerAnalytics(serverId: string, timeFilter: Date | nul
     const totalParticipants = Number(participantStats[0]?.totalParticipants) || 0;
     const totalResponses = Number(participantStats[0]?.totalResponses) || 0;
 
-    // Get average response time from response history
+    // Get average response time from response history (only initial responses for accurate first-response time)
     const avgResponseTime = await db
       .select({
         avgTime: avg(responseHistory.responseTimeSeconds)
@@ -1072,11 +1073,11 @@ async function calculateServerAnalytics(serverId: string, timeFilter: Date | nul
       .from(responseHistory)
       .innerJoin(participants, eq(responseHistory.participantId, participants.id))
       .innerJoin(events, eq(participants.eventId, events.id))
-      .where(and(eq(events.serverId, serverId), timeCondition));
+      .where(and(eq(events.serverId, serverId), timeCondition, eq(responseHistory.responseContext, 'INITIAL')));
 
     const avgResponseTimeHours = (Number(avgResponseTime[0]?.avgTime) || 0) / 3600;
 
-    // Calculate last minute change rate
+    // Calculate last minute change rate (uses LAST_MINUTE context set by terminManager)
     const lastMinuteChanges = await db
       .select({ count: count() })
       .from(responseHistory)
@@ -1085,7 +1086,7 @@ async function calculateServerAnalytics(serverId: string, timeFilter: Date | nul
       .where(and(
         eq(events.serverId, serverId),
         timeCondition,
-        sql`${responseHistory.hoursBeforeEvent} < 6`
+        eq(responseHistory.responseContext, 'LAST_MINUTE')
       ));
 
     const lastMinuteChangeRate = totalResponses > 0 ? (Number(lastMinuteChanges[0]?.count) || 0) / totalResponses * 100 : 0;
@@ -1350,12 +1351,12 @@ async function calculateEventTrends(serverId: string, timeFilter: Date | null): 
     // Get events by month
     const eventsByMonth = await db
       .select({
-        month: sql<string>`strftime('%Y-%m', ${events.createdAt})`,
+        month: sql<string>`strftime('%Y-%m', ${events.createdAt}, 'unixepoch')`,
         count: count()
       })
       .from(events)
       .where(and(eq(events.serverId, serverId), timeCondition))
-      .groupBy(sql`strftime('%Y-%m', ${events.createdAt})`);
+      .groupBy(sql`strftime('%Y-%m', ${events.createdAt}, 'unixepoch')`);
 
     const byMonth = eventsByMonth.reduce((acc, item) => {
       acc[item.month] = Number(item.count);
@@ -1365,12 +1366,12 @@ async function calculateEventTrends(serverId: string, timeFilter: Date | null): 
     // Get events by weekday (0=Sunday, 1=Monday, etc.)
     const eventsByWeekday = await db
       .select({
-        weekday: sql<string>`strftime('%w', ${events.parsedDate})`,
+        weekday: sql<string>`strftime('%w', ${events.parsedDate}, 'unixepoch')`,
         count: count()
       })
       .from(events)
       .where(and(eq(events.serverId, serverId), timeCondition, sql`${events.parsedDate} IS NOT NULL`))
-      .groupBy(sql`strftime('%w', ${events.parsedDate})`);
+      .groupBy(sql`strftime('%w', ${events.parsedDate}, 'unixepoch')`);
 
     const weekdayNames = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
     const byWeekday = eventsByWeekday.reduce((acc, item) => {
@@ -1379,15 +1380,15 @@ async function calculateEventTrends(serverId: string, timeFilter: Date | null): 
       return acc;
     }, {} as Record<string, number>);
 
-    // Get events by hour
+    // Get events by hour (use parsedDate for accurate UTC hour extraction)
     const eventsByHour = await db
       .select({
-        hour: sql<string>`substr(${events.time}, 1, 2)`,
+        hour: sql<string>`strftime('%H', ${events.parsedDate}, 'unixepoch')`,
         count: count()
       })
       .from(events)
-      .where(and(eq(events.serverId, serverId), timeCondition))
-      .groupBy(sql`substr(${events.time}, 1, 2)`);
+      .where(and(eq(events.serverId, serverId), timeCondition, sql`${events.parsedDate} IS NOT NULL`))
+      .groupBy(sql`strftime('%H', ${events.parsedDate}, 'unixepoch')`);
 
     const byHour = eventsByHour.reduce((acc, item) => {
       acc[item.hour] = Number(item.count);
@@ -1433,10 +1434,10 @@ async function calculateEventTrends(serverId: string, timeFilter: Date | null): 
     const totalResponsesForReminders = Number(reminderStats[0]?.totalResponses) || 0;
     const reminderEffectiveness = totalResponsesForReminders > 0 ? (responsesAfterReminder / totalResponsesForReminders) * 100 : 0;
 
-    // Calculate last minute statistics
+    // Calculate last minute statistics (uses LAST_MINUTE context set by terminManager)
     const lastMinuteStats = await db
       .select({
-        lastMinuteChanges: count(sql`CASE WHEN ${responseHistory.hoursBeforeEvent} < 6 THEN 1 END`)
+        lastMinuteChanges: count(sql`CASE WHEN ${responseHistory.responseContext} = 'LAST_MINUTE' THEN 1 END`)
       })
       .from(responseHistory)
       .innerJoin(participants, eq(responseHistory.participantId, participants.id))
@@ -1485,7 +1486,7 @@ async function calculateResponseAnalytics(serverId: string, timeFilter: Date | n
         responsesAfterReminder: count(sql`CASE WHEN ${responseHistory.responseContext} = 'AFTER_REMINDER' THEN 1 END`),
         responsesAfterStartReminder: count(sql`CASE WHEN ${responseHistory.responseContext} = 'AFTER_START_REMINDER' THEN 1 END`),
         initialResponses: count(sql`CASE WHEN ${responseHistory.responseContext} = 'INITIAL' THEN 1 END`),
-        lastMinuteChanges: count(sql`CASE WHEN ${responseHistory.hoursBeforeEvent} < 6 THEN 1 END`),
+        lastMinuteChanges: count(sql`CASE WHEN ${responseHistory.responseContext} = 'LAST_MINUTE' THEN 1 END`),
         avgResponseTime: avg(responseHistory.responseTimeSeconds),
         avgHoursBeforeEvent: avg(responseHistory.hoursBeforeEvent)
       })
@@ -1520,8 +1521,16 @@ async function calculateResponseAnalytics(serverId: string, timeFilter: Date | n
       .where(and(eq(events.serverId, serverId), timeCondition))
       .orderBy(responseHistory.responseTimeSeconds);
 
-    const medianResponseTimeHours = medianQuery.length > 0 ? 
-      (Number(medianQuery[Math.floor(medianQuery.length / 2)]?.responseTime) || 0) / 3600 : 0;
+    let medianSeconds = 0;
+    if (medianQuery.length > 0) {
+      const mid = Math.floor(medianQuery.length / 2);
+      if (medianQuery.length % 2 === 0) {
+        medianSeconds = ((Number(medianQuery[mid - 1]?.responseTime) || 0) + (Number(medianQuery[mid]?.responseTime) || 0)) / 2;
+      } else {
+        medianSeconds = Number(medianQuery[mid]?.responseTime) || 0;
+      }
+    }
+    const medianResponseTimeHours = medianSeconds / 3600;
 
     const reminderEffectiveness = totalResponses > 0 ? 
       ((Number(stats.responsesAfterReminder) || 0) / totalResponses) * 100 : 0;
@@ -1581,9 +1590,9 @@ async function calculateDetailedAnalytics(serverId: string, timeFilter: Date | n
       return null;
     }
 
-    // Calculate success and cancellation rates
-    const successRate = ((closedEvents) + (activeEvents)) / totalEvents * 100;
-    const cancellationRate = (cancelledEvents) / totalEvents * 100;
+    // Calculate success and cancellation rates (only CLOSED events count as completed/successful)
+    const successRate = closedEvents / totalEvents * 100;
+    const cancellationRate = cancelledEvents / totalEvents * 100;
 
     // Get response quality metrics
     const responseQualityStats = await db
@@ -1591,7 +1600,7 @@ async function calculateDetailedAnalytics(serverId: string, timeFilter: Date | n
         totalResponses: count(responseHistory.id),
         quickResponses: count(sql`CASE WHEN ${responseHistory.responseTimeSeconds} < 21600 THEN 1 END`),
         reminderResponses: count(sql`CASE WHEN ${responseHistory.responseContext} = 'AFTER_REMINDER' THEN 1 END`),
-        lastMinuteChanges: count(sql`CASE WHEN ${responseHistory.hoursBeforeEvent} < 6 THEN 1 END`),
+        lastMinuteChanges: count(sql`CASE WHEN ${responseHistory.responseContext} = 'LAST_MINUTE' THEN 1 END`),
         avgResponseTime: avg(responseHistory.responseTimeSeconds)
       })
       .from(responseHistory)
@@ -1615,8 +1624,8 @@ async function calculateDetailedAnalytics(serverId: string, timeFilter: Date | n
     const reminderDependency = totalResponses > 0 ? 
       (reminderResponses / totalResponses) * 100 : 0;
 
-    const stabilityIndex = totalResponses > 0 ? 
-      100 - (lastMinuteChanges / totalResponses * 100) : 100;
+    const stabilityIndex = totalResponses > 0 ?
+      Math.max(0, 100 - (lastMinuteChanges / totalResponses * 100)) : 100;
 
     // Determine engagement level
     const avgResponseTimeHours = avgResponseTime / 3600;
@@ -2014,10 +2023,16 @@ function generateTrendPredictions(trendData: EventTrends): string {
 }
 
 function generateTimingInsights(timingAnalysis: any): string {
-  return `**Durchschn. Response-Zeit:** ${timingAnalysis.avgResponseTime.toFixed(1)}h ⏱️\n` +
-         `**Optimale Einladungszeit:** 48-72h vorher 📅\n` +
-         `**Reminder-Timing:** Nach 24h optimal 🔔\n` +
-         `**Last-Minute Threshold:** < 6h kritisch ⚡`;
+  const avgHours = timingAnalysis.avgResponseTime?.toFixed(1) ?? 'N/A';
+  const lastMinRate = timingAnalysis.lastMinuteRate != null
+    ? `${timingAnalysis.lastMinuteRate.toFixed(1)}%`
+    : 'N/A';
+  const reminderEff = timingAnalysis.reminderEffectiveness != null
+    ? `${timingAnalysis.reminderEffectiveness.toFixed(1)}%`
+    : 'N/A';
+  return `**Durchschn. Erstantwort-Zeit:** ${avgHours}h ⏱️\n` +
+         `**Last-Minute-Rate:** ${lastMinRate} ⚡\n` +
+         `**Reminder-Effektivität:** ${reminderEff} 🔔`;
 }
 
 function generateDetailedRecommendations(detailedMetrics: any): string {
@@ -2130,20 +2145,53 @@ async function generateEventStatusChart(serverId: string, timeFilter: Date | nul
 
 async function generateResponseRateChart(serverId: string, timeFilter: Date | null): Promise<AttachmentBuilder> {
   if (!chartJSNodeCanvas) throw new Error('Charts nicht verfügbar');
-  
-  // This would need time-series data - simplified version
+
+  const timeCondition = timeFilter ? gte(events.createdAt, timeFilter) : undefined;
+
+  const monthlyData = await db
+    .select({
+      month: sql<string>`strftime('%Y-%m', ${events.createdAt}, 'unixepoch')`,
+      totalParticipants: count(participants.id),
+      respondedCount: count(sql`CASE WHEN ${participants.currentStatus} != 'PENDING' THEN 1 END`)
+    })
+    .from(events)
+    .leftJoin(participants, eq(events.id, participants.eventId))
+    .where(and(eq(events.serverId, serverId), timeCondition))
+    .groupBy(sql`strftime('%Y-%m', ${events.createdAt}, 'unixepoch')`)
+    .orderBy(sql`strftime('%Y-%m', ${events.createdAt}, 'unixepoch')`);
+
+  if (monthlyData.length === 0) throw new Error('Keine Daten für Response-Rate-Chart verfügbar');
+
+  const monthNames: Record<string, string> = {
+    '01': 'Jan', '02': 'Feb', '03': 'Mär', '04': 'Apr',
+    '05': 'Mai', '06': 'Jun', '07': 'Jul', '08': 'Aug',
+    '09': 'Sep', '10': 'Okt', '11': 'Nov', '12': 'Dez'
+  };
+
+  const labels = monthlyData.map(d => {
+    const [year, month] = d.month.split('-');
+    return `${monthNames[month] || month} ${year}`;
+  });
+  const data = monthlyData.map(d => {
+    const total = Number(d.totalParticipants) || 0;
+    const responded = Number(d.respondedCount) || 0;
+    return total > 0 ? Math.round((responded / total) * 100) : 0;
+  });
+
   const configuration = {
     type: 'line' as const,
     data: {
-      labels: ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun'],
+      labels,
       datasets: [{
-        label: 'Response Rate (%)',
-        data: [75, 80, 85, 78, 82, 88], // Mock data - would need real calculation
+        label: 'Response-Rate (%)',
+        data,
         borderColor: '#0099ff',
         backgroundColor: 'rgba(0, 153, 255, 0.1)',
         borderWidth: 3,
         fill: true,
-        tension: 0.4
+        tension: 0.4,
+        pointRadius: 5,
+        pointBackgroundColor: '#0099ff'
       }]
     },
     options: {
@@ -2151,7 +2199,7 @@ async function generateResponseRateChart(serverId: string, timeFilter: Date | nu
       plugins: {
         title: {
           display: true,
-          text: 'Response-Rate Entwicklung',
+          text: 'Response-Rate Entwicklung (monatlich)',
           font: { size: 24, weight: 'bold' },
           padding: 20
         }
@@ -2161,10 +2209,9 @@ async function generateResponseRateChart(serverId: string, timeFilter: Date | nu
           beginAtZero: true,
           max: 100,
           ticks: {
-            callback: function(value: any) {
-              return value + '%';
-            }
-          }
+            callback: function(value: any) { return value + '%'; }
+          },
+          title: { display: true, text: 'Response-Rate (%)' }
         }
       }
     }
@@ -2316,18 +2363,40 @@ async function generateBehaviorDistributionChart(behaviorMetrics: ResponsiveBeha
 
 async function generateResponseTimeDistributionChart(serverId: string, timeFilter: Date | null): Promise<AttachmentBuilder> {
   if (!chartJSNodeCanvas) throw new Error('Charts nicht verfügbar');
-  
-  // Would need actual data from response history
+
+  const timeCondition = timeFilter ? gte(events.createdAt, timeFilter) : undefined;
+
+  const rtStats = await db
+    .select({
+      instant: count(sql`CASE WHEN ${responseHistory.responseTimeSeconds} < 3600 THEN 1 END`),
+      quick: count(sql`CASE WHEN ${responseHistory.responseTimeSeconds} BETWEEN 3600 AND 21600 THEN 1 END`),
+      normal: count(sql`CASE WHEN ${responseHistory.responseTimeSeconds} BETWEEN 21600 AND 86400 THEN 1 END`),
+      slow: count(sql`CASE WHEN ${responseHistory.responseTimeSeconds} BETWEEN 86400 AND 172800 THEN 1 END`),
+      verySlow: count(sql`CASE WHEN ${responseHistory.responseTimeSeconds} > 172800 THEN 1 END`)
+    })
+    .from(responseHistory)
+    .innerJoin(participants, eq(responseHistory.participantId, participants.id))
+    .innerJoin(events, eq(participants.eventId, events.id))
+    .where(and(eq(events.serverId, serverId), timeCondition));
+
+  const data = [
+    Number(rtStats[0]?.instant) || 0,
+    Number(rtStats[0]?.quick) || 0,
+    Number(rtStats[0]?.normal) || 0,
+    Number(rtStats[0]?.slow) || 0,
+    Number(rtStats[0]?.verySlow) || 0
+  ];
+  const total = data.reduce((a, b) => a + b, 0);
+  if (total === 0) throw new Error('Keine Response-Daten für Verteilungs-Chart verfügbar');
+
   const configuration = {
     type: 'bar' as const,
     data: {
-      labels: ['< 1h', '1-6h', '6-24h', '24-48h', '> 48h'],
+      labels: ['< 1h', '1–6h', '6–24h', '24–48h', '> 48h'],
       datasets: [{
         label: 'Anzahl Responses',
-        data: [15, 35, 45, 20, 10], // Mock data
-        backgroundColor: [
-          '#28a745', '#17a2b8', '#ffc107', '#fd7e14', '#dc3545'
-        ],
+        data,
+        backgroundColor: ['#28a745', '#17a2b8', '#ffc107', '#fd7e14', '#dc3545'],
         borderWidth: 2
       }]
     },
@@ -2336,7 +2405,7 @@ async function generateResponseTimeDistributionChart(serverId: string, timeFilte
       plugins: {
         title: {
           display: true,
-          text: 'Response-Zeit Verteilung',
+          text: `Response-Zeit Verteilung (${total} Responses)`,
           font: { size: 24, weight: 'bold' },
           padding: 20
         }
@@ -2344,10 +2413,7 @@ async function generateResponseTimeDistributionChart(serverId: string, timeFilte
       scales: {
         y: {
           beginAtZero: true,
-          title: {
-            display: true,
-            text: 'Anzahl Responses'
-          }
+          title: { display: true, text: 'Anzahl Responses' }
         }
       }
     }
@@ -2357,18 +2423,44 @@ async function generateResponseTimeDistributionChart(serverId: string, timeFilte
   return new AttachmentBuilder(buffer, { name: 'response_time_distribution_chart.png' });
 }
 
-// Additional chart generation functions would follow similar patterns...
 async function generateActivityTimelineChart(serverId: string, timeFilter: Date | null): Promise<AttachmentBuilder> {
   if (!chartJSNodeCanvas) throw new Error('Charts nicht verfügbar');
-  
-  // Mock timeline data - would need real monthly aggregation
+
+  const timeCondition = timeFilter ? gte(events.createdAt, timeFilter) : undefined;
+
+  const monthlyData = await db
+    .select({
+      month: sql<string>`strftime('%Y-%m', ${events.createdAt}, 'unixepoch')`,
+      count: count()
+    })
+    .from(events)
+    .where(and(eq(events.serverId, serverId), timeCondition))
+    .groupBy(sql`strftime('%Y-%m', ${events.createdAt}, 'unixepoch')`)
+    .orderBy(sql`strftime('%Y-%m', ${events.createdAt}, 'unixepoch')`);
+
+  if (monthlyData.length === 0) {
+    throw new Error('Keine Events für Timeline-Chart verfügbar');
+  }
+
+  const monthNames: Record<string, string> = {
+    '01': 'Jan', '02': 'Feb', '03': 'Mär', '04': 'Apr',
+    '05': 'Mai', '06': 'Jun', '07': 'Jul', '08': 'Aug',
+    '09': 'Sep', '10': 'Okt', '11': 'Nov', '12': 'Dez'
+  };
+
+  const labels = monthlyData.map(d => {
+    const [year, month] = d.month.split('-');
+    return `${monthNames[month] || month} ${year}`;
+  });
+  const data = monthlyData.map(d => Number(d.count));
+
   const configuration = {
     type: 'line' as const,
     data: {
-      labels: ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'],
+      labels,
       datasets: [{
         label: 'Events pro Monat',
-        data: [5, 8, 12, 15, 18, 22, 25, 20, 16, 12, 8, 6],
+        data,
         borderColor: '#ff6b35',
         backgroundColor: 'rgba(255, 107, 53, 0.1)',
         borderWidth: 3,
@@ -2404,18 +2496,34 @@ async function generateActivityTimelineChart(serverId: string, timeFilter: Date 
 
 async function generateWeekdayDistributionChart(serverId: string, timeFilter: Date | null): Promise<AttachmentBuilder> {
   if (!chartJSNodeCanvas) throw new Error('Charts nicht verfügbar');
-  
-  // Would need actual weekday data from database
+
+  const timeCondition = timeFilter ? gte(events.createdAt, timeFilter) : undefined;
+
+  const weekdayRows = await db
+    .select({
+      weekday: sql<string>`strftime('%w', ${events.parsedDate}, 'unixepoch')`,
+      count: count()
+    })
+    .from(events)
+    .where(and(eq(events.serverId, serverId), timeCondition, sql`${events.parsedDate} IS NOT NULL`))
+    .groupBy(sql`strftime('%w', ${events.parsedDate}, 'unixepoch')`);
+
+  // SQLite %w: 0=Sunday … 6=Saturday; display Mon–Sun order
+  const weekdayOrder = ['1', '2', '3', '4', '5', '6', '0'];
+  const weekdayLabels = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
+  const countMap = weekdayRows.reduce((acc, r) => { acc[r.weekday] = Number(r.count); return acc; }, {} as Record<string, number>);
+  const data = weekdayOrder.map(d => countMap[d] || 0);
+
+  const total = data.reduce((a, b) => a + b, 0);
+  if (total === 0) throw new Error('Keine Events für Wochentag-Chart verfügbar');
+
   const configuration = {
     type: 'doughnut' as const,
     data: {
-      labels: ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'],
+      labels: weekdayLabels,
       datasets: [{
-        data: [12, 15, 18, 20, 25, 30, 8], // Mock data
-        backgroundColor: [
-          '#ff6384', '#36a2eb', '#ffce56', '#4bc0c0',
-          '#9966ff', '#ff9f40', '#c9cbcf'
-        ],
+        data,
+        backgroundColor: ['#ff6384', '#36a2eb', '#ffce56', '#4bc0c0', '#9966ff', '#ff9f40', '#c9cbcf'],
         borderWidth: 3,
         borderColor: '#ffffff'
       }]
@@ -2425,16 +2533,13 @@ async function generateWeekdayDistributionChart(serverId: string, timeFilter: Da
       plugins: {
         title: {
           display: true,
-          text: 'Events nach Wochentag',
+          text: `Events nach Wochentag (${total} gesamt)`,
           font: { size: 24, weight: 'bold' },
           padding: 20
         },
         legend: {
           position: 'bottom' as const,
-          labels: { 
-            font: { size: 14 },
-            padding: 15
-          }
+          labels: { font: { size: 14 }, padding: 15 }
         }
       }
     }
@@ -2446,23 +2551,36 @@ async function generateWeekdayDistributionChart(serverId: string, timeFilter: Da
 
 async function generateHourDistributionChart(serverId: string, timeFilter: Date | null): Promise<AttachmentBuilder> {
   if (!chartJSNodeCanvas) throw new Error('Charts nicht verfügbar');
-  
-  // Mock hour distribution data
-  const hourData = Array.from({length: 24}, (_, i) => ({
-    hour: i.toString().padStart(2, '0'),
-    count: Math.max(0, Math.round(Math.random() * 15 - 5))
-  }));
-  
+
+  const timeCondition = timeFilter ? gte(events.createdAt, timeFilter) : undefined;
+
+  const hourRows = await db
+    .select({
+      hour: sql<string>`strftime('%H', ${events.parsedDate}, 'unixepoch')`,
+      count: count()
+    })
+    .from(events)
+    .where(and(eq(events.serverId, serverId), timeCondition, sql`${events.parsedDate} IS NOT NULL`))
+    .groupBy(sql`strftime('%H', ${events.parsedDate}, 'unixepoch')`);
+
+  const countMap = hourRows.reduce((acc, r) => { acc[r.hour] = Number(r.count); return acc; }, {} as Record<string, number>);
+  const allHours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));
+  const data = allHours.map(h => countMap[h] || 0);
+  const maxCount = Math.max(...data, 1);
+
+  const total = data.reduce((a, b) => a + b, 0);
+  if (total === 0) throw new Error('Keine Events für Stunden-Chart verfügbar');
+
   const configuration = {
     type: 'bar' as const,
     data: {
-      labels: hourData.map(h => `${h.hour}:00`),
+      labels: allHours.map(h => `${h}:00`),
       datasets: [{
         label: 'Events pro Stunde',
-        data: hourData.map(h => h.count),
-        backgroundColor: hourData.map(h => {
-          const intensity = h.count / 15;
-          return `rgba(0, 153, 255, ${0.3 + intensity * 0.7})`;
+        data,
+        backgroundColor: data.map(c => {
+          const intensity = c / maxCount;
+          return `rgba(0, 153, 255, ${0.2 + intensity * 0.8})`;
         }),
         borderColor: '#0099ff',
         borderWidth: 2
@@ -2473,7 +2591,7 @@ async function generateHourDistributionChart(serverId: string, timeFilter: Date 
       plugins: {
         title: {
           display: true,
-          text: 'Event-Verteilung nach Uhrzeit',
+          text: `Event-Verteilung nach Uhrzeit (${total} Events)`,
           font: { size: 24, weight: 'bold' },
           padding: 20
         },
@@ -2482,16 +2600,10 @@ async function generateHourDistributionChart(serverId: string, timeFilter: Date 
       scales: {
         y: {
           beginAtZero: true,
-          title: {
-            display: true,
-            text: 'Anzahl Events'
-          }
+          title: { display: true, text: 'Anzahl Events' }
         },
         x: {
-          title: {
-            display: true,
-            text: 'Uhrzeit'
-          }
+          title: { display: true, text: 'Uhrzeit' }
         }
       }
     }
@@ -2967,20 +3079,43 @@ async function generateResponseTimingChart(responseMetrics: any): Promise<Attach
 
 async function generateReminderEffectivenessChart(serverId: string, timeFilter: Date | null): Promise<AttachmentBuilder> {
   if (!chartJSNodeCanvas) throw new Error('Charts nicht verfügbar');
-  
-  // Mock data for reminder effectiveness over time
+
+  const timeCondition = timeFilter ? gte(events.createdAt, timeFilter) : undefined;
+
+  const contextRows = await db
+    .select({
+      context: responseHistory.responseContext,
+      count: count()
+    })
+    .from(responseHistory)
+    .innerJoin(participants, eq(responseHistory.participantId, participants.id))
+    .innerJoin(events, eq(participants.eventId, events.id))
+    .where(and(eq(events.serverId, serverId), timeCondition))
+    .groupBy(responseHistory.responseContext);
+
+  const contextMap = contextRows.reduce((acc, r) => {
+    acc[r.context ?? 'UNKNOWN'] = Number(r.count);
+    return acc;
+  }, {} as Record<string, number>);
+
+  const data = [
+    contextMap['INITIAL'] || 0,
+    contextMap['AFTER_REMINDER'] || 0,
+    contextMap['AFTER_START_REMINDER'] || 0,
+    contextMap['LAST_MINUTE'] || 0
+  ];
+  const total = data.reduce((a, b) => a + b, 0);
+  if (total === 0) throw new Error('Keine Response-Kontext-Daten verfügbar');
+
   const configuration = {
-    type: 'line' as const,
+    type: 'doughnut' as const,
     data: {
-      labels: ['Woche 1', 'Woche 2', 'Woche 3', 'Woche 4', 'Woche 5', 'Woche 6'],
+      labels: ['Direkt geantwortet', 'Nach Erinnerung', 'Nach Start-Erinnerung', 'Last-Minute'],
       datasets: [{
-        label: 'Reminder Effektivität (%)',
-        data: [25, 30, 35, 28, 32, 38],
-        borderColor: '#ffc107',
-        backgroundColor: 'rgba(255, 193, 7, 0.1)',
+        data,
+        backgroundColor: ['#28a745', '#ffc107', '#fd7e14', '#dc3545'],
         borderWidth: 3,
-        fill: true,
-        tension: 0.4
+        borderColor: '#ffffff'
       }]
     },
     options: {
@@ -2988,19 +3123,13 @@ async function generateReminderEffectivenessChart(serverId: string, timeFilter: 
       plugins: {
         title: {
           display: true,
-          text: 'Reminder-Effektivität Entwicklung',
-          font: { size: 24, weight: 'bold' },
+          text: `Antwort-Kontext Verteilung (${total} Responses)`,
+          font: { size: 22, weight: 'bold' },
           padding: 20
-        }
-      },
-      scales: {
-        y: {
-          beginAtZero: true,
-          max: 100,
-          title: {
-            display: true,
-            text: 'Effektivität (%)'
-          }
+        },
+        legend: {
+          position: 'bottom' as const,
+          labels: { font: { size: 14 }, padding: 15 }
         }
       }
     }
@@ -3062,16 +3191,60 @@ async function generatePerformanceRadarChart(detailedMetrics: any): Promise<Atta
 
 async function generateEngagementHeatmapChart(serverId: string, timeFilter: Date | null): Promise<AttachmentBuilder> {
   if (!chartJSNodeCanvas) throw new Error('Charts nicht verfügbar');
-  
-  // Mock heatmap data representing engagement by hour and day
+
+  const timeCondition = timeFilter ? gte(events.createdAt, timeFilter) : undefined;
+
+  const engagementRows = await db
+    .select({
+      weekday: sql<string>`strftime('%w', ${responseHistory.changedAt}, 'unixepoch')`,
+      hour: sql<number>`CAST(strftime('%H', ${responseHistory.changedAt}, 'unixepoch') AS INT)`,
+      count: count()
+    })
+    .from(responseHistory)
+    .innerJoin(participants, eq(responseHistory.participantId, participants.id))
+    .innerJoin(events, eq(participants.eventId, events.id))
+    .where(and(eq(events.serverId, serverId), timeCondition))
+    .groupBy(
+      sql`strftime('%w', ${responseHistory.changedAt}, 'unixepoch')`,
+      sql`CAST(strftime('%H', ${responseHistory.changedAt}, 'unixepoch') AS INT)`
+    );
+
+  const total = engagementRows.reduce((s, r) => s + Number(r.count), 0);
+  if (total === 0) throw new Error('Keine Engagement-Daten für Heatmap verfügbar');
+
+  // Build slot map: weekday (Mon-Sun order) × 4 time slots (0-6, 6-12, 12-18, 18-24)
+  // SQLite %w: 0=Sunday … 6=Saturday; display Mon-Sun
+  const dayOrder = ['1', '2', '3', '4', '5', '6', '0'];
+  const slotLabels = ['0–6h', '6–12h', '12–18h', '18–24h'];
+  const slotColors = [
+    'rgba(54, 162, 235, 0.7)',
+    'rgba(255, 206, 86, 0.7)',
+    'rgba(255, 159, 64, 0.7)',
+    'rgba(153, 102, 255, 0.7)'
+  ];
+
+  const slotData: number[][] = [
+    dayOrder.map(() => 0),
+    dayOrder.map(() => 0),
+    dayOrder.map(() => 0),
+    dayOrder.map(() => 0)
+  ];
+
+  for (const row of engagementRows) {
+    const dayIdx = dayOrder.indexOf(row.weekday);
+    if (dayIdx === -1) continue;
+    const slot = Math.min(3, Math.floor(Number(row.hour) / 6));
+    slotData[slot][dayIdx] += Number(row.count);
+  }
+
   const configuration = {
     type: 'bar' as const,
     data: {
       labels: ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'],
-      datasets: Array.from({length: 4}, (_, timeSlot) => ({
-        label: `${timeSlot * 6}-${(timeSlot + 1) * 6}h`,
-        data: Array.from({length: 7}, () => Math.round(Math.random() * 20)),
-        backgroundColor: `rgba(${50 + timeSlot * 50}, ${100 + timeSlot * 30}, ${200 - timeSlot * 40}, 0.7)`
+      datasets: slotLabels.map((label, i) => ({
+        label,
+        data: slotData[i],
+        backgroundColor: slotColors[i]
       }))
     },
     options: {
@@ -3079,27 +3252,15 @@ async function generateEngagementHeatmapChart(serverId: string, timeFilter: Date
       plugins: {
         title: {
           display: true,
-          text: 'Engagement Heatmap - Zeit × Wochentag',
-          font: { size: 24, weight: 'bold' },
+          text: `Engagement Heatmap – Zeit × Wochentag (${total} Responses)`,
+          font: { size: 22, weight: 'bold' },
           padding: 20
-        }
+        },
+        legend: { position: 'bottom' as const }
       },
       scales: {
-        x: {
-          stacked: true,
-          title: {
-            display: true,
-            text: 'Wochentag'
-          }
-        },
-        y: {
-          stacked: true,
-          beginAtZero: true,
-          title: {
-            display: true,
-            text: 'Engagement Level'
-          }
-        }
+        x: { stacked: true, title: { display: true, text: 'Wochentag' } },
+        y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Anzahl Responses' } }
       }
     }
   };

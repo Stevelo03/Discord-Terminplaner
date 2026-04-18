@@ -86,8 +86,8 @@ module.exports = {
       }
       
       // Progress update
-      await interaction.editReply({ 
-        content: `🔄 **Verarbeite Teilnehmer...**\n\n📝 **Event:** ${event.title}\n📅 **Datum:** ${event.date} um ${event.time} Uhr\n\n⏳ Analysiere Benutzer und Rollen...` 
+      await interaction.editReply({
+        content: `🔄 **Verarbeite Teilnehmer...**\n\n📝 **Event:** ${event.title}\n📅 ${event.date} ${event.time}\n\n⏳ Analysiere Benutzer und Rollen...`
       });
       
       // Teilnehmer-IDs und Rollen-IDs extrahieren

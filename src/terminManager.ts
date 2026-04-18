@@ -131,25 +131,30 @@ async function createResponseHistory(
 }
 
 // Calculate hours before event
+// Accepts Discord timestamp strings (<t:UNIX:*>) or legacy DD.MM.YYYY + HH:MM
 function calculateHoursBeforeEvent(eventDate: string, eventTime: string): number {
   try {
-    // Parse event date and time
+    // Discord timestamp format: extract unix seconds directly (timezone-safe)
+    const discordMatch = eventDate.match(/<t:(\d+):[DdTtRrFf]>/);
+    if (discordMatch) {
+      const unixSeconds = parseInt(discordMatch[1]);
+      const eventDateTime = new Date(unixSeconds * 1000);
+      const diffMs = eventDateTime.getTime() - Date.now();
+      return Math.max(0, diffMs / (1000 * 60 * 60));
+    }
+
+    // Legacy: parse DD.MM.YYYY + HH:MM
     const [day, month, year] = eventDate.split('.');
     const [hours, minutes] = eventTime.split(':');
-    
     const eventDateTime = new Date(
-      parseInt(year), 
-      parseInt(month) - 1, 
-      parseInt(day), 
-      parseInt(hours), 
+      parseInt(year),
+      parseInt(month) - 1,
+      parseInt(day),
+      parseInt(hours),
       parseInt(minutes)
     );
-    
-    const now = new Date();
-    const diffMs = eventDateTime.getTime() - now.getTime();
-    const hoursBeforeEvent = diffMs / (1000 * 60 * 60);
-    
-    return Math.max(0, hoursBeforeEvent);
+    const diffMs = eventDateTime.getTime() - Date.now();
+    return Math.max(0, diffMs / (1000 * 60 * 60));
   } catch (error) {
     console.error('Error calculating hours before event:', error);
     return 0;
@@ -183,25 +188,35 @@ export async function createEvent(
   participantUserIds: string[],
   channel: TextChannel,
   relativeDate?: string | null,
-  comment?: string | null
+  comment?: string | null,
+  eventUnixSeconds?: number | null  // Unix timestamp in seconds for exact parsedDate
 ): Promise<string> {
   try {
     const serverId = channel.guildId;
     const serverName = channel.guild.name;
-    
+
     // Ensure server exists
     await ensureServer(serverId, serverName);
-    
+
     // Generate event ID
     const eventId = Date.now().toString();
-    
-    // Parse date for queries (optional)
+
+    // Derive parsedDate: prefer explicit unix seconds, then Discord timestamp in date string, then DD.MM.YYYY
     let parsedDate: Date | null = null;
-    try {
-      const [day, month, year] = date.split('.');
-      parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-    } catch (error) {
-      console.warn('Could not parse date:', date);
+    if (eventUnixSeconds) {
+      parsedDate = new Date(eventUnixSeconds * 1000);
+    } else {
+      const discordMatch = date.match(/<t:(\d+):[DdTtRrFf]>/);
+      if (discordMatch) {
+        parsedDate = new Date(parseInt(discordMatch[1]) * 1000);
+      } else {
+        try {
+          const [day, month, year] = date.split('.');
+          parsedDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+        } catch (error) {
+          console.warn('Could not parse date:', date);
+        }
+      }
     }
     
     // Ensure organizer exists
@@ -212,7 +227,7 @@ export async function createEvent(
     const serverEmbed = new EmbedBuilder()
       .setColor('#0099ff')
       .setTitle(`Terminplanung: ${title}`)
-      .setDescription(`Termin für ${date} um ${time} Uhr.${relativeDate ? `\nDas ist ${relativeDate}` : ''}${comment ? `\n\n**Kommentar:** ${comment}` : ''}\n`)
+      .setDescription(`📅 ${date} ${time}\n🕐 ${relativeDate}${comment ? `\n\n**Kommentar:** ${comment}` : ''}\n`)
       .setTimestamp()
       .setFooter({ text: `Event ID: ${eventId} • Status: Aktiv` });
     
@@ -369,12 +384,8 @@ export async function inviteParticipant(
     });
     
     // Create DM embed
-    let description = `Du wurdest eingeladen am ${date} an ${title} teilzunehmen, um ${time} Uhr.`;
-    
-    if (relativeDate) {
-      description += `\nDas ist ${relativeDate}`;
-    }
-    
+    let description = `Du wurdest zu **${title}** eingeladen.\n\n📅 ${date} ${time}\n🕐 ${relativeDate}`;
+
     if (comment) {
       description += `\n\n**Kommentar:** ${comment}`;
     }
@@ -546,13 +557,13 @@ export async function updateEventMessage(eventId: string): Promise<void> {
         statusText += ` (${eventData.cancellationReason})`;
       }
       
-      // Description with optional relative date and comment
-      let description = `Termin für ${eventData.date} um ${eventData.time} Uhr.`;
-      
+      // Description with date, time, relative date and optional comment
+      let description = `📅 ${eventData.date} ${eventData.time}`;
+
       if (eventData.relativeDate) {
-        description += `\nDas ist ${eventData.relativeDate}`;
+        description += `\n🕐 ${eventData.relativeDate}`;
       }
-      
+
       if (eventData.comment) {
         description += `\n\n**Kommentar:** ${eventData.comment}`;
       }

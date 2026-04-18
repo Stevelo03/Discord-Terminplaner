@@ -1379,15 +1379,15 @@ async function calculateEventTrends(serverId: string, timeFilter: Date | null): 
       return acc;
     }, {} as Record<string, number>);
 
-    // Get events by hour
+    // Get events by hour (use parsedDate for accurate UTC hour extraction)
     const eventsByHour = await db
       .select({
-        hour: sql<string>`substr(${events.time}, 1, 2)`,
+        hour: sql<string>`strftime('%H', ${events.parsedDate}, 'unixepoch')`,
         count: count()
       })
       .from(events)
-      .where(and(eq(events.serverId, serverId), timeCondition))
-      .groupBy(sql`substr(${events.time}, 1, 2)`);
+      .where(and(eq(events.serverId, serverId), timeCondition, sql`${events.parsedDate} IS NOT NULL`))
+      .groupBy(sql`strftime('%H', ${events.parsedDate}, 'unixepoch')`);
 
     const byHour = eventsByHour.reduce((acc, item) => {
       acc[item.hour] = Number(item.count);
@@ -2555,12 +2555,12 @@ async function generateHourDistributionChart(serverId: string, timeFilter: Date 
 
   const hourRows = await db
     .select({
-      hour: sql<string>`substr(${events.time}, 1, 2)`,
+      hour: sql<string>`strftime('%H', ${events.parsedDate}, 'unixepoch')`,
       count: count()
     })
     .from(events)
-    .where(and(eq(events.serverId, serverId), timeCondition))
-    .groupBy(sql`substr(${events.time}, 1, 2)`);
+    .where(and(eq(events.serverId, serverId), timeCondition, sql`${events.parsedDate} IS NOT NULL`))
+    .groupBy(sql`strftime('%H', ${events.parsedDate}, 'unixepoch')`);
 
   const countMap = hourRows.reduce((acc, r) => { acc[r.hour] = Number(r.count); return acc; }, {} as Record<string, number>);
   const allHours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, '0'));

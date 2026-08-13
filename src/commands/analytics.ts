@@ -11,7 +11,7 @@ import {
   eventAuditLogs,
   servers
 } from '../db/schema';
-import { eq, and, desc, sql, count, avg, sum, gte, lte, between } from 'drizzle-orm';
+import { eq, and, desc, sql, count, avg, sum, gte, lte, between, inArray } from 'drizzle-orm';
 
 // Chart Generation Dependencies mit erweiterten Error Handling
 let ChartJSNodeCanvas: any;
@@ -1077,6 +1077,19 @@ async function calculateServerAnalytics(serverId: string, timeFilter: Date | nul
 
     const avgResponseTimeHours = (Number(avgResponseTime[0]?.avgTime) || 0) / 3600;
 
+    // Total response_history rows in scope - the correct denominator for rates whose
+    // numerator also comes from response_history (a participant can have several history
+    // rows, e.g. multiple status changes, so the participant-based `totalResponses` above
+    // is the wrong denominator here and can push these rates above 100%).
+    const historyStats = await db
+      .select({ count: count() })
+      .from(responseHistory)
+      .innerJoin(participants, eq(responseHistory.participantId, participants.id))
+      .innerJoin(events, eq(participants.eventId, events.id))
+      .where(and(eq(events.serverId, serverId), timeCondition));
+
+    const totalHistoryEntries = Number(historyStats[0]?.count) || 0;
+
     // Calculate last minute change rate (uses LAST_MINUTE context set by terminManager)
     const lastMinuteChanges = await db
       .select({ count: count() })
@@ -1089,7 +1102,7 @@ async function calculateServerAnalytics(serverId: string, timeFilter: Date | nul
         eq(responseHistory.responseContext, 'LAST_MINUTE')
       ));
 
-    const lastMinuteChangeRate = totalResponses > 0 ? (Number(lastMinuteChanges[0]?.count) || 0) / totalResponses * 100 : 0;
+    const lastMinuteChangeRate = totalHistoryEntries > 0 ? (Number(lastMinuteChanges[0]?.count) || 0) / totalHistoryEntries * 100 : 0;
 
     // Calculate reminder effectiveness
     const reminderResponses = await db
@@ -1103,7 +1116,7 @@ async function calculateServerAnalytics(serverId: string, timeFilter: Date | nul
         eq(responseHistory.responseContext, 'AFTER_REMINDER')
       ));
 
-    const reminderEffectiveness = totalResponses > 0 ? (Number(reminderResponses[0]?.count) || 0) / totalResponses * 100 : 0;
+    const reminderEffectiveness = totalHistoryEntries > 0 ? (Number(reminderResponses[0]?.count) || 0) / totalHistoryEntries * 100 : 0;
 
     // Get server name
     const serverInfo = await db
@@ -1177,6 +1190,7 @@ async function calculateUserBehaviorStats(serverId: string, userId: string, time
     // Calculate behavior rates from response history
     const behaviorStats = await db
       .select({
+        totalHistoryEntries: count(responseHistory.id),
         quickResponses: count(sql`CASE WHEN ${responseHistory.responseTimeSeconds} < 21600 THEN 1 END`), // < 6h
         reminderResponses: count(sql`CASE WHEN ${responseHistory.responseContext} = 'AFTER_REMINDER' THEN 1 END`),
         lastMinuteResponses: count(sql`CASE WHEN ${responseHistory.hoursBeforeEvent} < 6 THEN 1 END`),
@@ -1192,6 +1206,11 @@ async function calculateUserBehaviorStats(serverId: string, userId: string, time
       ));
 
     const behavior = behaviorStats[0];
+    // Denominator for the response-history-based rates below: a single participation can
+    // produce several response_history rows (repeated status changes), so this must be the
+    // history row count, not the participant-based `totalResponses` (which caps at 1 per
+    // event) - otherwise these rates can come out above 100%.
+    const totalHistoryEntries = Number(behavior.totalHistoryEntries) || 0;
     const quickResponses = Number(behavior.quickResponses) || 0;
     const reminderResponses = Number(behavior.reminderResponses) || 0;
     const lastMinuteResponses = Number(behavior.lastMinuteResponses) || 0;
@@ -1201,13 +1220,16 @@ async function calculateUserBehaviorStats(serverId: string, userId: string, time
       userId: user.userId,
       username: user.username,
       totalEvents: totalEvents,
-      totalInvites: user.totalInvites,
-      totalResponses: user.totalResponses,
+      // Invites/responses must reflect the same (optionally time-filtered) window as
+      // totalEvents - the cached serverUsers.totalInvites/totalResponses fields are
+      // lifetime counters and would silently ignore the `days` filter.
+      totalInvites: totalEvents,
+      totalResponses: totalResponses,
       responseRate: totalEvents > 0 ? (totalResponses / totalEvents) * 100 : 0,
       avgResponseTimeHours: avgResponseTime / 3600,
-      reminderDependencyRate: totalResponses > 0 ? (reminderResponses / totalResponses) * 100 : 0,
-      lastMinuteCancellationRate: totalResponses > 0 ? (lastMinuteResponses / totalResponses) * 100 : 0,
-      quickResponseRate: totalResponses > 0 ? (quickResponses / totalResponses) * 100 : 0,
+      reminderDependencyRate: totalHistoryEntries > 0 ? (reminderResponses / totalHistoryEntries) * 100 : 0,
+      lastMinuteCancellationRate: totalHistoryEntries > 0 ? (lastMinuteResponses / totalHistoryEntries) * 100 : 0,
+      quickResponseRate: totalHistoryEntries > 0 ? (quickResponses / totalHistoryEntries) * 100 : 0,
       acceptedCount: acceptedCount,
       declinedCount: declinedCount,
       pendingCount: pendingCount,
@@ -1225,24 +1247,24 @@ async function calculateBehaviorMetrics(serverId: string, timeFilter: Date | nul
   try {
     const timeCondition = timeFilter ? gte(events.createdAt, timeFilter) : undefined;
     
-    // Get all users with sufficient data for behavior analysis
-    const usersWithBehavior = await db
+    // Get all users with sufficient data for behavior analysis.
+    // Deliberately does NOT join response_history here: a participant can have several
+    // history rows (repeated status changes), and joining a one-to-many table into this
+    // aggregate would multiply count(participants.id) by that row count - inflating
+    // totalEvents/acceptedCount and letting users with too few real events slip past the
+    // `>= 3 events` threshold below.
+    const usersWithParticipation = await db
       .select({
         serverUserId: participants.serverUserId,
         userId: serverUsers.userId,
         username: serverUsers.username,
         totalEvents: count(participants.id),
         totalResponses: count(sql`CASE WHEN ${participants.currentStatus} != 'PENDING' THEN 1 END`),
-        quickResponses: count(sql`CASE WHEN ${responseHistory.responseTimeSeconds} < 21600 THEN 1 END`),
-        reminderResponses: count(sql`CASE WHEN ${responseHistory.responseContext} = 'AFTER_REMINDER' THEN 1 END`),
-        lastMinuteChanges: count(sql`CASE WHEN ${responseHistory.hoursBeforeEvent} < 6 THEN 1 END`),
-        acceptedCount: count(sql`CASE WHEN ${participants.currentStatus} = 'ACCEPTED' THEN 1 END`),
-        avgResponseTime: avg(responseHistory.responseTimeSeconds)
+        acceptedCount: count(sql`CASE WHEN ${participants.currentStatus} = 'ACCEPTED' THEN 1 END`)
       })
       .from(participants)
       .innerJoin(serverUsers, eq(participants.serverUserId, serverUsers.id))
       .innerJoin(events, eq(participants.eventId, events.id))
-      .leftJoin(responseHistory, eq(responseHistory.participantId, participants.id))
       .where(and(
         eq(events.serverId, serverId),
         timeCondition
@@ -1250,24 +1272,49 @@ async function calculateBehaviorMetrics(serverId: string, timeFilter: Date | nul
       .groupBy(participants.serverUserId, serverUsers.userId, serverUsers.username)
       .having(sql`COUNT(${participants.id}) >= 3`); // Minimum 3 events for meaningful analysis
 
-    if (usersWithBehavior.length === 0) {
+    if (usersWithParticipation.length === 0) {
       return null;
     }
 
+    // Response-history-based rates, aggregated separately so their denominator
+    // (history row count) matches their numerator's granularity.
+    const historyStats = await db
+      .select({
+        serverUserId: participants.serverUserId,
+        totalHistoryEntries: count(responseHistory.id),
+        quickResponses: count(sql`CASE WHEN ${responseHistory.responseTimeSeconds} < 21600 THEN 1 END`),
+        reminderResponses: count(sql`CASE WHEN ${responseHistory.responseContext} = 'AFTER_REMINDER' THEN 1 END`),
+        lastMinuteChanges: count(sql`CASE WHEN ${responseHistory.hoursBeforeEvent} < 6 THEN 1 END`),
+        avgResponseTime: avg(responseHistory.responseTimeSeconds)
+      })
+      .from(responseHistory)
+      .innerJoin(participants, eq(responseHistory.participantId, participants.id))
+      .innerJoin(events, eq(participants.eventId, events.id))
+      .where(and(
+        eq(events.serverId, serverId),
+        timeCondition
+      ))
+      .groupBy(participants.serverUserId);
+
+    const historyByServerUserId = new Map(historyStats.map(h => [h.serverUserId, h]));
+
     // Convert to UserBehaviorStats format and calculate rates
-    const userStats: UserBehaviorStats[] = usersWithBehavior.map(user => {
+    const userStats: UserBehaviorStats[] = usersWithParticipation.map(user => {
       const totalEvents = Number(user.totalEvents);
       const totalResponses = Number(user.totalResponses);
-      const quickResponses = Number(user.quickResponses);
-      const reminderResponses = Number(user.reminderResponses);
-      const lastMinuteChanges = Number(user.lastMinuteChanges);
       const acceptedCount = Number(user.acceptedCount);
-      const avgResponseTime = Number(user.avgResponseTime) || 0;
-      
+
+      const history = historyByServerUserId.get(user.serverUserId);
+      const totalHistoryEntries = Number(history?.totalHistoryEntries) || 0;
+      const quickResponses = Number(history?.quickResponses) || 0;
+      const reminderResponses = Number(history?.reminderResponses) || 0;
+      const lastMinuteChanges = Number(history?.lastMinuteChanges) || 0;
+      const avgResponseTime = Number(history?.avgResponseTime) || 0;
+
       const responseRate = totalEvents > 0 ? (totalResponses / totalEvents) * 100 : 0;
-      const quickResponseRate = totalResponses > 0 ? (quickResponses / totalResponses) * 100 : 0;
-      const reminderDependencyRate = totalResponses > 0 ? (reminderResponses / totalResponses) * 100 : 0;
-      const lastMinuteCancellationRate = totalResponses > 0 ? (lastMinuteChanges / totalResponses) * 100 : 0;
+      const quickResponseRate = totalHistoryEntries > 0 ? (quickResponses / totalHistoryEntries) * 100 : 0;
+      const reminderDependencyRate = totalHistoryEntries > 0 ? (reminderResponses / totalHistoryEntries) * 100 : 0;
+      const lastMinuteCancellationRate = totalHistoryEntries > 0 ? (lastMinuteChanges / totalHistoryEntries) * 100 : 0;
 
       return {
         userId: user.userId,
@@ -1740,21 +1787,23 @@ async function getRecentEvents(serverId: string, limit: number) {
 async function getUserResponsePattern(serverId: string, userId: string, timeFilter: Date | null) {
   try {
     const timeCondition = timeFilter ? gte(events.createdAt, timeFilter) : undefined;
-    
-    const responsePattern = await db
+
+    // Fetch the 10 most recent distinct events first (no response_history join here - a
+    // participant can have several history rows from repeated status changes, and joining
+    // that one-to-many table before the LIMIT would duplicate events in the list instead
+    // of returning 10 distinct ones).
+    const recentParticipations = await db
       .select({
+        participantId: participants.id,
         eventId: events.id,
         eventTitle: events.title,
         eventDate: events.date,
         currentStatus: participants.currentStatus,
-        responseTime: responseHistory.responseTimeSeconds,
-        responseContext: responseHistory.responseContext,
-        changedAt: responseHistory.changedAt
+        createdAt: events.createdAt
       })
       .from(participants)
       .innerJoin(events, eq(participants.eventId, events.id))
       .innerJoin(serverUsers, eq(participants.serverUserId, serverUsers.id))
-      .leftJoin(responseHistory, eq(responseHistory.participantId, participants.id))
       .where(and(
         eq(events.serverId, serverId),
         eq(serverUsers.userId, userId),
@@ -1763,7 +1812,42 @@ async function getUserResponsePattern(serverId: string, userId: string, timeFilt
       .orderBy(desc(events.createdAt))
       .limit(10);
 
-    return responsePattern;
+    if (recentParticipations.length === 0) {
+      return [];
+    }
+
+    // Attach only the latest response_history entry per participant/event.
+    const participantIds = recentParticipations.map(p => p.participantId);
+    const historyRows = await db
+      .select({
+        participantId: responseHistory.participantId,
+        responseTime: responseHistory.responseTimeSeconds,
+        responseContext: responseHistory.responseContext,
+        changedAt: responseHistory.changedAt
+      })
+      .from(responseHistory)
+      .where(inArray(responseHistory.participantId, participantIds))
+      .orderBy(desc(responseHistory.changedAt));
+
+    const latestHistoryByParticipantId = new Map<number, typeof historyRows[number]>();
+    for (const row of historyRows) {
+      if (!latestHistoryByParticipantId.has(row.participantId)) {
+        latestHistoryByParticipantId.set(row.participantId, row);
+      }
+    }
+
+    return recentParticipations.map(p => {
+      const latest = latestHistoryByParticipantId.get(p.participantId);
+      return {
+        eventId: p.eventId,
+        eventTitle: p.eventTitle,
+        eventDate: p.eventDate,
+        currentStatus: p.currentStatus,
+        responseTime: latest?.responseTime ?? null,
+        responseContext: latest?.responseContext ?? null,
+        changedAt: latest?.changedAt ?? null
+      };
+    });
   } catch (error) {
     console.error('Error getting user response pattern:', error);
     return [];
@@ -2831,10 +2915,12 @@ function calculateCommunityHealthScore(exportData: any): number {
   if (totalEvents === 0 || totalUsers === 0) return 0;
   
   const eventSuccessRate = exportData.events.filter((e: any) => e.status !== 'CANCELLED').length / totalEvents;
-  const userEngagement = totalResponses / (totalUsers * totalEvents || 1);
+  const userEngagement = Math.min(1, totalResponses / (totalUsers * totalEvents || 1));
   const activityLevel = Math.min(1, totalEvents / 10); // Normalize to max 10 events
-  
-  return Math.round((eventSuccessRate * 40 + userEngagement * 40 + activityLevel * 20) * 100);
+
+  // Each term is already scaled to its 0-100 share (40 + 40 + 20 = 100), so the sum is the
+  // final score - do not multiply by 100 again (that inflated the "X/100" score up to 10000).
+  return Math.round(eventSuccessRate * 40 + userEngagement * 40 + activityLevel * 20);
 }
 
 function generateExecutiveRecommendations(exportData: any): string {
